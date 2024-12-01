@@ -164,3 +164,4 @@ cython_debug/
 # Files.
 *.txt
 !requirementx.txt
+wandb

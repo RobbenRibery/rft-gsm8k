@@ -24,42 +24,77 @@ def inspect_instance(data, idx: int) -> None:
     print("*" * 50)
 
 
+
 @torch.no_grad()
 def sample_answers(
     tokenizer: PreTrainedTokenizer,
     model: PreTrainedModel,
-    chats: List[str],
-    max_new_tokens: int,
-    num_samples: int = 10,
-    top_p: float = 0.85,
-    top_k: int = 10,
-    temperature: float = 1.0,
-    num_beams: int = 1,
-    do_sample: bool = True,
-) -> str:
+    chats: List[str] = None,
+    input_ids:torch.Tensor = None,
+    attention_mask:torch.Tensor = None,
+    **kwargs,
+) -> List[str]:
     assert tokenizer.padding_side == "left"
-    encosings: torch.Tensor = tokenizer.batch_encode_plus(
-        chats,
-        return_tensors="pt",
-        padding="longest",
-    )
+    assert kwargs["return_dict_in_generate"]
+    
+    if chats:
+        encodings: torch.Tensor = tokenizer.batch_encode_plus(
+            chats,
+            return_tensors="pt",
+            padding="longest",
+        )
+        input_ids = encodings["input_ids"].cuda()
+        attention_mask = encodings["attention_mask"].cuda()
 
-    out_tokens = model.generate(
-        input_ids=encosings["input_ids"].cuda(),
-        attention_mask=encosings["attention_mask"].cuda(),
-        max_new_tokens=max_new_tokens,
-        num_return_sequences=num_samples,
-        top_p=top_p,
-        top_k=top_k,
-        temperature=temperature,
-        num_beams=num_beams,
-        do_sample=do_sample,
-    )
+    with torch.backends.cuda.sdp_kernel(
+        enable_flash=True, 
+        enable_math=False,
+        enable_mem_efficient=False
+    ):
+        generation_out = model.generate(
+            input_ids=input_ids,
+            attention_mask=attention_mask,
+            **kwargs
+        )
 
-    return tokenizer.batch_decode(out_tokens, skip_special_tokens=True)
+    new_tokens = generation_out.sequences[:, input_ids.shape[1]:] #[G, Tc,]
+
+    del input_ids
+    del attention_mask
+
+    if kwargs["output_scores"] and kwargs["num_return_sequences"] > 1:
+        new_token_probs = torch.stack(generation_out.scores, dim=1).softmax(-1) #[G, Tc, vocab_size]
+        
+        answer_logprobs_norm = torch.log(
+            torch.gather(
+                new_token_probs, 
+                dim=2, 
+                index=new_tokens[:,:,None]
+            ).squeeze(-1) #[G, Tc]
+        ).mean(-1) #[G, Tc]
+        # this step compute the mean of log(p(yt|y_1...y_{t-1},x)) over all sampled completions
+        # It's gonna be a negative value, but the higher the better
+        # this is not perfect, we should ignore the <eos> token that's padded across sampled completions
+        del new_token_probs
+
+        ranks = torch.argsort(answer_logprobs_norm, descending=True) #[G, Tc]
+        del answer_logprobs_norm
+
+        new_tokens = new_tokens[ranks]
+        del ranks 
+
+    return tokenizer.batch_decode(new_tokens, skip_special_tokens=True) 
 
 
 class GSM8KParser:
+
+    @classmethod
+    def get_question_length(cls, question_text: str, tokenizer:PreTrainedTokenizer) -> Dict[str, int]:
+        return {"question_length": len(tokenizer(question_text)["input_ids"])}
+    
+    @classmethod
+    def get_answer_length(cls, answer_text: str, tokenizer:PreTrainedTokenizer) -> Dict[str, int]:
+        return {"answer_length": len(tokenizer(answer_text)["input_ids"])}
 
     @classmethod
     def get_answer_from_gt(cls, answer_text: str) -> Dict[str, str]:
@@ -105,9 +140,9 @@ class GSM8KParser:
                     eval(candidate + c)
                     candidate += c
                 except Exception:
-                    return {"answer_str_digit": INVALID_ANSWER}
+                    break
             else:
-                return {"answer_str_digit": INVALID_ANSWER}
+                break
 
         if not candidate:
             return {"answer_str_digit": INVALID_ANSWER}
@@ -134,7 +169,7 @@ class GSM8KParser:
         return {"num_hops": len(answer_text.strip().split("\n")) - 1}
 
     @classmethod
-    def extract_equations(text: str) -> List[str] | None:
+    def extract_equations(text: str) -> Dict[str, List[str]]:
         """
         Extract list of equations from a string of text.
 
@@ -149,7 +184,11 @@ class GSM8KParser:
             The list of equations extracted from the text, or None if no equations were found
         """
         pattern = r"<<(.+?)>>"
-        return re.findall(pattern, text)
+        list_of_eqs = re.findall(pattern, text)
+        if not list_of_eqs:
+            raise ValueError("No equations found")
+
+        return {"equations": list_of_eqs}
 
 
 class GMS8KEvaluator:
@@ -195,6 +234,8 @@ class GMS8KEvaluator:
         int
             1 if the majority vote is correct, 0 otherwise.
         """
+        if isinstance(candidates, str):
+            candidates = [candidates]
         return int(self._get_maj(candidates) == answer)
 
 
