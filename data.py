@@ -1,6 +1,6 @@
 import torch 
 import datasets
-from transformers import PreTrainedTokenizer, PreTrainedModel
+from transformers import PreTrainedTokenizer
 from typing import Dict, Any, Type
 
 from torch.utils.data import Dataset
@@ -19,8 +19,7 @@ def _apply_template(
             {
                 "role": "user",
                 "content": template.user.format(
-                    question=instance[key],
-                    eos_token=tokenizer.eos_token,
+                    question=instance[key]
                 ),
             },
         ]
@@ -39,7 +38,7 @@ def _apply_template(
         # since it's part of the question already  
         formmated_str = formmated_str.lstrip("<|assistant|>").lstrip()
 
-    return {key: formmated_str}
+    return {f"formatted_{key}": formmated_str}
 
 class GSM8KDataset(Dataset):
     def __init__(
@@ -57,31 +56,19 @@ class GSM8KDataset(Dataset):
 
         # format question
         self.dataset = self.dataset.map(
-            _apply_template,
-            batched=False,
-            fn_kwargs={
-                "key": "question",
-                "tokenizer": self.tokenizer,
-                "add_generation_prompt": True,
-            },
+            lambda x: _apply_template(x, "question", self.tokenizer, EvalTemplate)
         )
         # format answer
         self.dataset = self.dataset.map(
-            _apply_template,
-            batched=False,
-            fn_kwargs={
-                "key": "answer",
-                "tokenizer": self.tokenizer,
-                "add_generation_prompt": False,
-            },
+            lambda x: _apply_template(x, "answer", self.tokenizer, EvalTemplate)
         )
 
         # infer max length
         self.dataset = self.dataset.map(
-            lambda x: GSM8KParser.get_question_length(x["question"], tokenizer)
+            lambda x: GSM8KParser.get_question_length(x["formatted_question"], tokenizer)
         )
         self.dataset = self.dataset.map(
-            lambda x: GSM8KParser.get_answer_length(x["answer"], tokenizer)
+            lambda x: GSM8KParser.get_answer_length(x["formatted_answer"], tokenizer)
         )
 
         self.max_length_question = max(self.dataset["question_length"])
@@ -116,7 +103,7 @@ class GSM8KDataset(Dataset):
 
         out = {}
 
-        question, answer = instance["question"], instance["answer"]
+        question, answer = instance["formatted_question"], instance["formatted_answer"]
 
         # tokenize formatted question
         question_encodings = self.tokenizer(

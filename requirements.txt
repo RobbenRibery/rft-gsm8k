@@ -8,3 +8,7 @@ torch
 accelerate
 transformers
 bitsandbytes
+nltk
+tyro
+isort
+black

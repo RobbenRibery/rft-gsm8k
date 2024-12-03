@@ -52,33 +52,33 @@ class EvalTemplate(EvalTemplateExp):
 """
 *Task*    
 Think step by step to solve the following question:
+NOTE:
+1. Reason deductively.
+1. Write all equations in a single line wihtout breaks in the middle.
+2. Submit final answer using PURE DIGITS, in the last starting with "####".
+    i.e. "#### 10" if the final answer is $10
+
 ```question
 {question}
 ```
-
-*Format*
-1. Submit the final answer with PURE DIGITS in a seperate new line starting with "####", proceeded by <|end|>,
-i.e. if the answer is £10, then write:"\n#### 10 <|end|>"
-
-2. Write equations in a single line wihtout line breaks in the middle. Change line after completing an equation.
 """
 ).strip()
 
 
-class RejectSamplingTemplate(EvalTemplateExp):
+# class RejectSamplingTemplate(EvalTemplateExp):
 
-    user = dedent(
-"""
-*Task*    
-Think step by step to solve the following question, be as detailed as possible:
-```question
-{question}
-```
+#     user = dedent(
+# """
+# *Task*    
+# Think step by step to solve the following question, be as detailed as possible:
+# ```question
+# {question}
+# ```
 
-*Format*
-1. Submit the final answer with PURE DIGITS in a seperate new line starting with "####", proceeded by <|end|>
-i.e. if the answer is £10, then write:"\n#### 10 <|end|>"
+# *Format*
+# 1. Submit the final answer with PURE DIGITS in a seperate new line starting with "####", proceeded by <|end|>
+# i.e. if the answer is £10, then write:"\n#### 10 <|end|>"
 
-2. Write equations in a single line wihtout line breaks in the middle. Change line after completing an equation.
-"""
-    ).strip()
+# 2. Write equations in a single line wihtout line breaks in the middle. Change line after completing an equation.
+# """
+#     ).strip()
