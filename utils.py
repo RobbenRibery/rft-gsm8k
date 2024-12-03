@@ -1,11 +1,10 @@
-from typing import List, Dict, Tuple
-from transformers import PreTrainedModel, PreTrainedTokenizer
+import re
+import datasets
 import torch
 
 from collections import Counter
-import re
-from sympy.parsing.sympy_parser import parse_expr
-from sympy.parsing.sympy_parser import standard_transformations
+from typing import List, Dict, Tuple
+from transformers import PreTrainedModel, PreTrainedTokenizer
 
 INVALID_ANSWER = "<INVALID_ANSWER>"
 VALID_ANSWER_CHARS = set([str(i) for i in range(10)] + [",", ".", "-"])
@@ -24,19 +23,18 @@ def inspect_instance(data, idx: int) -> None:
     print("*" * 50)
 
 
-
 @torch.no_grad()
 def sample_answers(
     tokenizer: PreTrainedTokenizer,
     model: PreTrainedModel,
     chats: List[str] = None,
-    input_ids:torch.Tensor = None,
-    attention_mask:torch.Tensor = None,
+    input_ids: torch.Tensor = None,
+    attention_mask: torch.Tensor = None,
     **kwargs,
 ) -> List[str]:
     assert tokenizer.padding_side == "left"
     assert kwargs["return_dict_in_generate"]
-    
+
     if chats:
         encodings: torch.Tensor = tokenizer.batch_encode_plus(
             chats,
@@ -46,54 +44,121 @@ def sample_answers(
         input_ids = encodings["input_ids"].cuda()
         attention_mask = encodings["attention_mask"].cuda()
 
-    with torch.backends.cuda.sdp_kernel(
-        enable_flash=True, 
-        enable_math=False,
-        enable_mem_efficient=False
-    ):
-        generation_out = model.generate(
-            input_ids=input_ids,
-            attention_mask=attention_mask,
-            **kwargs
-        )
+    generation_out = model.generate(
+        input_ids=input_ids, 
+        attention_mask=attention_mask, 
+        **kwargs
+    )
 
-    new_tokens = generation_out.sequences[:, input_ids.shape[1]:] #[G, Tc,]
+    new_tokens = generation_out.sequences[:, input_ids.shape[1] :]  # [G, Tc,]
 
     del input_ids
     del attention_mask
 
     if kwargs["output_scores"] and kwargs["num_return_sequences"] > 1:
-        new_token_probs = torch.stack(generation_out.scores, dim=1).softmax(-1) #[G, Tc, vocab_size]
-        
+        new_token_probs = torch.stack(generation_out.scores, dim=1).softmax(
+            -1
+        )  # [G, Tc, vocab_size]
+
         answer_logprobs_norm = torch.log(
-            torch.gather(
-                new_token_probs, 
-                dim=2, 
-                index=new_tokens[:,:,None]
-            ).squeeze(-1) #[G, Tc]
-        ).mean(-1) #[G, Tc]
+            torch.gather(new_token_probs, dim=2, index=new_tokens[:, :, None]).squeeze(
+                -1
+            )  # [G, Tc]
+        ).mean(
+            -1
+        )  # [G, Tc]
         # this step compute the mean of log(p(yt|y_1...y_{t-1},x)) over all sampled completions
         # It's gonna be a negative value, but the higher the better
         # this is not perfect, we should ignore the <eos> token that's padded across sampled completions
         del new_token_probs
 
-        ranks = torch.argsort(answer_logprobs_norm, descending=True) #[G, Tc]
+        ranks = torch.argsort(answer_logprobs_norm)  # [G, Tc]
+        # return ranks in ascending order
         del answer_logprobs_norm
 
+        # sort completions from least confident to most confident
         new_tokens = new_tokens[ranks]
-        del ranks 
+        del ranks
 
-    return tokenizer.batch_decode(new_tokens, skip_special_tokens=True) 
+    return tokenizer.batch_decode(new_tokens, skip_special_tokens=True)
+
+
+def parse_equations(text: str) -> List[str]:
+    """
+    Parse a given text and extract any mathematical equations from it.
+
+    The parsing is done using regular expressions.
+    First, we match any pattern that starts with at least one digit, followed by any characters.
+    This is the left side pattern.
+
+    Once we meet an = sign, we then look for any characters followed by at least one digit.
+    This is the right side pattern.
+
+    Finally, we repeat the right side pattern indefinitely.
+
+    Then, for each matched string, we extract only the digits and mathematical operators
+    (+, -, *, /) and return it as a string.
+
+    Note: This parser only works for a single-line equations.
+
+    Args:
+        text (str): The text to parse.
+
+    Returns:
+        List[str]: A list of strings, where each string represents a mathematical equation.
+    """
+
+    def extract_digits(text_with_digits: str) -> str:
+        """
+        Extracts only the digits from a string.
+
+        Args:
+            text_with_digits (str): string that contains digits.
+
+        Returns:
+            str: a string with only the digits
+        """
+        return "".join(
+            [
+                c
+                for c in text_with_digits
+                if c.isdigit() or c in {"+", "-", "*", "/", "="}
+            ]
+        )
+
+    # eq pattern consistes of two parts:
+    # 1. left side: matching the digits(continuous) + any chracters
+    # 2. right side: matching the any character (continuous) + digits
+    # 3. repeat the right side pattern indefinately
+    eq_pattern = r"(\d+.*?)=(.*?\d+)+"
+    regex = re.compile(eq_pattern)
+    matches = list(regex.finditer(text))
+    if not matches:
+        return []
+
+    # Process each test string
+    equations = []
+    for _, m in enumerate(matches):
+        start, end = m.start(), m.end()
+        matched_string = text[start:end]
+        equation = extract_digits(matched_string)
+        equations.append(equation)
+
+    return equations
 
 
 class GSM8KParser:
 
     @classmethod
-    def get_question_length(cls, question_text: str, tokenizer:PreTrainedTokenizer) -> Dict[str, int]:
+    def get_question_length(
+        cls, question_text: str, tokenizer: PreTrainedTokenizer
+    ) -> Dict[str, int]:
         return {"question_length": len(tokenizer(question_text)["input_ids"])}
-    
+
     @classmethod
-    def get_answer_length(cls, answer_text: str, tokenizer:PreTrainedTokenizer) -> Dict[str, int]:
+    def get_answer_length(
+        cls, answer_text: str, tokenizer: PreTrainedTokenizer
+    ) -> Dict[str, int]:
         return {"answer_length": len(tokenizer(answer_text)["input_ids"])}
 
     @classmethod
@@ -285,3 +350,16 @@ if __name__ == "__main__":
     assert GSM8KParser.get_answer_from_pred(ex4) == {"answer_str_digit": "-78"}, print(
         GSM8KParser.get_answer_from_pred(ex3)
     )
+
+    text = """
+    3 + 9 = 12 
+    4 + 7 = 8 (somthing)
+
+    4 apple + 8 apple = 12 apple 
+
+    1+2-3=1+3=-2=4
+
+    $4 * $5 + $6 * $7 = 12
+    """
+    out = parse_equations(text)
+    print(out)
