@@ -306,6 +306,7 @@ class LoraLit(pl.LightningModule):
         optimizer = bnb.optim.Adam8bit(
             self.parameters(),
             lr=self.train_config.learning_rate,
+            weight_decay=self.train_config.weight_decay,
         )
         total_training_steps = (
             len(self.train_dataset)//self.train_config.batch_size
