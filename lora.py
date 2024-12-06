@@ -225,16 +225,16 @@ if __name__ == "__main__":
         seed:int = 42
         """Mannual Seed for the run"""
 
-    # parse
+    
     args = tyro.cli(Args)
     if args.train:
         assert args.run_name, "Please provide a name for the training run"
         assert not args.train or not args.evaluate, "Cannot train and evaluate at the same time"
 
-    # seeding
     seed_everything(args.seed)
 
-    # load the rft data if provided
+
+    # --------------- Experiment Configs ---------------
     if args.rft_data_path and args.train:
         rft_data = datasets.load_from_disk(args.rft_data_path)
         print(f"RFT:\n")
@@ -247,11 +247,13 @@ if __name__ == "__main__":
         print(f"SFT:\n")
         args.run_name += "qlora_sft"
 
-    # load tokenizer
+
+    # --------------- Load Tokenizer ---------------
     tokenizer:PreTrainedTokenizer = AutoTokenizer.from_pretrained(args.model_name)
     tokenizer.pad_token = tokenizer.eos_token
     
-    # ---------- Datasets ---------- # 
+
+    # --------------- Prepare Trainset ---------------
     train_dataset = datasets.load_dataset('gsm8k', 'main')['train']
     org_len = len(train_dataset)
     
@@ -285,6 +287,8 @@ if __name__ == "__main__":
 
     TrainData = GSM8KDataset(train_dataset, tokenizer)
     
+
+    # --------------- Test-Val Split ---------------
     TrainLoader = DataLoader(
         TrainData,
         batch_size=TrainingConfig.batch_size,
@@ -323,9 +327,9 @@ if __name__ == "__main__":
     TestData = GSM8KDataset(test_dataset, tokenizer)
     print(f"Test size: {len(TestData)}")
 
-    # train vs eval
-    if args.train:
 
+    # --------------- Training Code ---------------
+    if args.train:
         # quantization config 
         bb_config = BitsAndBytesConfig(
             load_in_4bit=True,
@@ -401,6 +405,8 @@ if __name__ == "__main__":
         trainer.save_model(output_dir=f"models/{args.run_name}")
         print(f"### Model saved to models/{args.run_name} ###")
 
+
+    # --------------- Evaluation Code ---------------
     if args.evaluate:
 
         if 'Phi-3.5' in args.model_name and not args.train:
