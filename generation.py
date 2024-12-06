@@ -15,7 +15,6 @@ from transformers import PreTrainedTokenizer, PreTrainedModel
 from data import GSM8KDataset
 from tqdm import tqdm 
 from utils import (
-    INVALID_ANSWER,
     GSM8KParser,
     save, 
     load,
@@ -28,48 +27,59 @@ os.environ["TOKENIZERS_PARALLELISM"] = "true"
 
 WRONG_SOLUTIONS_PLACEHOLDER = "<NOWRONG SOLUTION>"
 
-def _socre_equations(equations: List[str], beta_1:float=0.8,) -> Tuple[int, int, int]:
+def _socre_equations(
+    equations: List[str], 
+    beta_1:float=0.5,
+    ) -> Tuple[int, int, int]:
     """
-    Scores the equations based on the pair-wise levenshtein distance
-    and the number of lines in each equation. 
+    Computes utility scores for a list of equations based on the Levenshtein
+    distance and equation lengths, identifying the most and least novel equations.
 
-    The score is a normalised average of the two, with the levenshtein
-    distance normalised by the maximum levenshtein distance, and the
-    number of lines normalised by the maximum number of lines.
+    This function calculates the sum of pairwise Levenshtein distances between
+    equations to quantify novelty. It normalizes these distances and combines them
+    with equation lengths to produce a weighted novelty score for each equation.
+    The function returns the indices of the most and least novel equations, as well
+    as the difference in their novelty scores.
 
-    The function returns a tuple of three integers: the index of the
-    best solution, the index of the worst solution, and the gap between
-    the two.
+    Args:
+        equations (List[str]): A list of equations represented as strings.
+        beta_1 (float, optional): A weight to balance the influence of Levenshtein
+            distance and equation length in the novelty score. Defaults to 0.5.
+
+    Returns:
+        Tuple[int, int, int]: A tuple containing:
+            - The index of the most novel equation.
+            - The index of the least novel equation.
+            - The difference in novelty scores between the most and least novel equations.
     """
     if len(equations) == 1:
         return 0, 0, 0
 
     # iterate through the equations
-    # compute the pair-wise levenshtein distance
+    # compute the sum of the pair-wise levenshtein distance
     # note that we fill d[i][j] into d[j][i] since it is symmetric
     distances = defaultdict(int)
     for i in range(len(equations)):
         for j in range(i + 1, len(equations)):
             d_ij = edit_distance(equations[i], equations[j])
             distances[i] += d_ij
-            distances[j] += d_ij # back fill the lower triagnular-section
+            distances[j] += d_ij
 
     # normalise the maximum levenshtein distance
     max_dist = max(distances.values())
     if max_dist == 0:
         max_dist = 1
     
-    # ge the number of lines and normaliser as well
+    # ge the length of each equation and normaliser as well
     eqs_lengths = [len(eq) for eq in equations]
     max_length = max(eqs_lengths)
     if max_length == 0:
         max_length = 1
     
     for idx, score in distances.items():
-        # here, we take the average of the levenshtein distance and the number of lines
-        # since our equaiton parser is not perfect, we use the number of lines as well
-        # as another proxy for the novelty of the overall solution
-        # one could further tune such hyperparameters to make it more robust
+        # Here, we use the legnth of the equaiton as another proxy 
+        # for the novelty of the overall solution in case the sum(Levenshtein distance) is not representative
+        # beta_1 is the weight on the levenshtein distance, one could further tune such hyperparameter
         distances[idx] = beta_1 * (score/max_dist) + (1-beta_1) * eqs_lengths[idx]/max_length
 
     max_idx = max(distances, key = distances.get)
@@ -85,8 +95,24 @@ def get_generations(
     batch_size:int=4,
     **kwargs,
 ) -> List[torch.Tensor]:  
-    
-    # same as sample_answers, but only perform the gpu operations
+    """
+    Same as `sample_answers`, but runs against a dataset.
+
+    This function batches the dataset and uses a non-shuffled DataLoader to generate
+    sequences for each batch. It returns a list of tensors, where each tensor contains
+    the generated sequences for a single batch. sequences are all token ids. 
+
+    Args:
+        tokenizer (PreTrainedTokenizer): The tokenizer to use.
+        model (PreTrainedModel): The model to use.
+        dataset (GSM8KDataset): The dataset to generate sequences from.
+        batch_size (int, optional): The batch size to use. Defaults to 4.
+        **kwargs: Additional keyword arguments to pass to `model.generate`.
+
+    Returns:
+        List[torch.Tensor]: A list of tensors, where each tensor contains the generated
+        sequences for a single batch.
+    """
     assert tokenizer.padding_side == "left"
     assert kwargs["return_dict_in_generate"]
     results = []
@@ -125,16 +151,32 @@ def _filter_completions(
     topk_dataset:GSM8KDataset,
     include_text:bool=False,
     ) -> Tuple[List, List, List]: 
-    
-    # get the new tokens from generation
+    """
+    Filters and categorizes completions based on their correctness against a given dataset.
+
+    Args:
+        sequences (torch.Tensor): The generated sequences of token IDs.
+        input_length (int): The length of the input prompt to exclude from completions.
+        tokenizer (PreTrainedTokenizer): The tokenizer used to decode sequences.
+        idx (int): The index of the current instance in the dataset.
+        topk_dataset (GSM8KDataset): The dataset containing ground truth answers.
+        include_text (bool, optional): Whether to include text in parsed equations. Defaults to False.
+
+    Returns:
+        Tuple[List, List, List]: A tuple containing:
+            - A list of unique correct completions.
+            - A list of incorrect completions.
+            - A list of equations parsed from unique correct completions.
+    """
     new_tokens = sequences[:, input_length :]
     completions = tokenizer.batch_decode(new_tokens, skip_special_tokens=True)
 
     # go through each completion and return the best and the worst tuple
-    incorrect_completions:List[str] = [] #incorrect completion tokens
-    unique_correct_completions:List[str] = [] # correct completion tokens 
-    correct_completions_visited = set() # visited correct completions
-    unique_correct_completions_eqs:List[str] = [] # reasoning traces/equations
+    incorrect_completions:List[str] = [] 
+    unique_correct_completions:List[str] = []  
+    
+    correct_completions_visited = set() 
+    unique_correct_completions_eqs:List[str] = [] 
 
     for _, completion in enumerate(completions):
 
@@ -147,13 +189,12 @@ def _filter_completions(
             # final answer not aligned with gt 
             incorrect_completions.append(completion)
         else:
-            # final answer matches gt exactly
-            # add only if not visited
+            # final answer matches gt exactly add only if not visited
             if completion not in correct_completions_visited:
                 correct_completions_visited.add(completion)
                 unique_correct_completions.append(completion)
 
-                # parse equations
+                # parse equations and join them together 
                 equaiton_str = " ".join(
                     GSM8KParser.parse_equations_from_pred(
                         completion, 
@@ -176,7 +217,42 @@ def generate_synthetic_data(
     include_text:bool = False,
     **generation_config
 ) -> datasets.Dataset:
+    """
+    Generate synthetic data for GSM8K dataset
 
+    This function takes a pre-trained model and a GSM8K dataset, and generates
+    a new dataset with favored and infavored solutions for each question. The
+    favored solution is the one with the highest novelty metric, and the
+    infavored solution is the one with the lowest novelty metric.
+
+    Args:
+        tokenizer (PreTrainedTokenizer): The tokenizer to use for encoding
+            the input.
+        dataset (GSM8KDataset): The GSM8K dataset to generate synthetic data
+            for.
+        name (str, optional): The name of the generated dataset. Defaults to
+            "gsm8k".
+        batch_size (int, optional): The batch size to use for generating the
+            completions. Defaults to 4.
+        generations_path (str, optional): The path to a saved generations
+            file. If provided, the function will load the generations from this
+            file instead of generating them.
+        model (PreTrainedModel, optional): The pre-trained model to use for
+            generating the completions. If not provided, the function will use
+            the default model.
+        beta_1 (float, optional): The weight on the Levenshtein distance 
+            component of the novelty metric. This is a hyperparameter that 
+            balances the importance of the Levenshtein distance and the length
+            of the equation. A higher value gives more weight to the Levenshtein
+            distance, while a lower value gives more weight to the length of
+            the equation. Defaults to 0.8.
+        include_text (bool, optional): Whether to include the text of the
+            question in the generated completions. Defaults to False.
+        generation_config (dict, optional): Additional configuration options
+            for the generation process. Defaults to {}.
+    Returns:
+        datasets.Dataset: The generated synthetic dataset.
+    """
     questions:List[str] = []
     questions_idx:List[int] = []
     favored_solutions: List[str] = []
@@ -303,13 +379,13 @@ if __name__ == "__main__":
         The name of the run, which will be the name of the dataset saved
         """
 
-        generation_path:str = ""
+        generation_path:str = "datasets/corrected-pred-parser-0.5lev-0.5leneq-gsm8k_synthetic_data_747instances_5samples"
         """
         Path of the .pickle file storing the 
         pre-loaded generatoins of the model
         """
 
-        beta_1:float = 0.8
+        beta_1:float = 0.5
         """Scoring weight on the Levenshtein distance of equations
         The complementary term (1-beta_1) is the weight on the length of the equations
         """
@@ -321,7 +397,8 @@ if __name__ == "__main__":
 
     args = tyro.cli(SyntheticDataConfig)
 
-    # load the model
+
+    ### ---------- Load the model and tokenizer
     MODEL_NAME = "microsoft/Phi-3.5-mini-instruct"
     model = None
     if not args.generation_path:
@@ -334,10 +411,9 @@ if __name__ == "__main__":
         )
     tokenizer:PreTrainedTokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
 
-    # get the train dataset
+
+    ### ---------- Filter the Training Set for rejection sampling
     train_dataset = datasets.load_dataset('gsm8k', 'main')['train']
-    
-    # NOTE:
     # we use the number of hops to filter the difficulty of the instances
     # and we want our rejection sampling to focus on those part more 
     # (due to limited computational power and time)
@@ -355,6 +431,8 @@ if __name__ == "__main__":
     )
     TopKTrainData = GSM8KDataset(top_k_train_dataset, tokenizer)
     
+
+    ### ---------- Generate the Synthetic Dataset and save it
     num_input_samples = len(TopKTrainData)
     args.run_name += f"gsm8k_synthetic_data_{num_input_samples}instances_{args.num_return_sequences}samples"
     print(f"Selected {num_input_samples} instances for rejection sampling")

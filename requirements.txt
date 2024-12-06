@@ -13,3 +13,4 @@ tyro
 isort
 black
 deepspeed
+seaborn 
