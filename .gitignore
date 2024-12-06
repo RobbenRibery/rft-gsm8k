@@ -168,7 +168,8 @@ wandb
 qlora_rft_747instances
 [ffn]-lora-16r-16alpha_rft_747instances/
 [attn-ffn]-lora-64r-64alpha_rft_747instances/
-*.md 
+models
+!README.md
 *.json 
 *.safetensors
 *pt 
