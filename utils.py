@@ -11,16 +11,32 @@ INVALID_ANSWER = "<INVALID_ANSWER>"
 VALID_ANSWER_CHARS = set([str(i) for i in range(10)] + [",", ".", "-"])
 
 
-def save(filename, obj):
+def save(filename:str, obj):
+    """
+    Saves a python object to a pickle file.
+
+    Args:
+        filename: The filename of the pickle file to save to.
+        obj: The python object to save.
+    """
     with open(f'{filename}.pickle', 'wb') as handle:
         pickle.dump(obj, handle, protocol=pickle.HIGHEST_PROTOCOL)
         print(f"Saved {filename}.pickle")
 
-def load(filename):
+def load(filename:str):
+    """
+    Loads a pickled file and returns the unpickled object.
+
+    Args:
+        filename: The filename of the pickled file to load.
+
+    Returns:
+        The unpickled object.
+    """
     with open(f'{filename}.pickle', 'rb') as handle:
         return pickle.load(handle)
 
-def inspect_instance(data, idx: int) -> None:
+def inspect_instance(data:Dict[str,str], idx: int) -> None:
     """
     Prints out the key-value pairs of a given instance in a dataset at idx.
 
@@ -42,6 +58,20 @@ def sample_answers(
     attention_mask: torch.Tensor = None,
     **kwargs,
 ) -> List[str]:
+    """
+    Samples answers from a given model and tokenizer.
+
+    Args:
+        tokenizer: The tokenizer to use.
+        model: The model to use.
+        chats: The list of chats to sample answers from.
+        input_ids: The input ids to use. If given, `chats` will be ignored.
+        attention_mask: The attention mask to use. If given, `chats` will be ignored.
+        **kwargs: Additional keyword arguments to pass to `model.generate`.
+
+    Returns:
+        A list of strings, where each string is an answer sampled from the model.
+    """
     assert tokenizer.padding_side == "left"
     assert kwargs["return_dict_in_generate"]
 
@@ -51,20 +81,18 @@ def sample_answers(
             return_tensors="pt",
             padding="longest",
         )
-        input_ids = encodings["input_ids"].cuda()
-        attention_mask = encodings["attention_mask"].cuda()
+        input_ids = encodings["input_ids"]
+        attention_mask = encodings["attention_mask"]
 
     generation_out = model.generate(
-        input_ids=input_ids, 
-        attention_mask=attention_mask, 
+        input_ids=input_ids.to(model.device), 
+        attention_mask=attention_mask.to(model.device), 
         **kwargs
     )
 
-    new_tokens = generation_out.sequences[:, input_ids.shape[1] :]  # [G, Tc,]
+    new_tokens = generation_out.sequences[:, input_ids.shape[1] :]
 
-    del input_ids
-    del attention_mask
-
+    del input_ids, attention_mask, generation_out
     return tokenizer.batch_decode(new_tokens, skip_special_tokens=True)
 
 
@@ -74,16 +102,38 @@ class GSM8KParser:
     def get_question_length(
         cls, question_text: str, tokenizer: PreTrainedTokenizer
     ) -> Dict[str, int]:
+        """Get the number of tokens in the question"""
         return {"question_length": len(tokenizer(question_text)["input_ids"])}
 
     @classmethod
     def get_answer_length(
         cls, answer_text: str, tokenizer: PreTrainedTokenizer
     ) -> Dict[str, int]:
+        """Get the number of tokens in the answer"""
         return {"answer_length": len(tokenizer(answer_text)["input_ids"])}
 
     @classmethod
     def get_answer_from_gt(cls, answer_text: str) -> Dict[str, str]:
+        """
+        This function is strict that it will gurantee to find a 
+        valid answer in the given answer_text, provided that the answer
+        text from the GSM8K Dataset (not generated answer)
+        Any violation of the format will wiae an error 
+
+        Parse the answer from the ground truth format.
+
+        The ground truth format is a single string with the following rules:
+
+        1. The last line should start with "####"
+        2. The last line should contain only digits
+
+        Args:
+            answer_text (str): The answer text from the GMS8K Dataset
+
+        Returns:
+            A dictionary with a single key "answer_str_digit" and the
+            corresponding value as the digit-only answer string.
+        """
         lines = answer_text.strip().split("\n")
 
         if "####" not in lines[-1]:
@@ -102,39 +152,37 @@ class GSM8KParser:
     @classmethod
     def get_answer_from_pred(cls, pred_answer_text: str) -> Dict[str, str]:
 
-        # positive lookahead, terminate at the end of the string or the next "####"
-        answer_pattern = r"(####.*?)(?=\Z|####)"
-        matches: List[str] | None = re.findall(
-            answer_pattern, pred_answer_text, flags=re.DOTALL
-        )
-        if not matches:
+        # last line 
+        pred_answer_text = pred_answer_text.strip().split("\n")[-1]
+
+        # Pattern explanation:
+        # ####\s*               Match '####' followed by optional whitespace
+        # (                     Start capturing group
+        #   -?                  Optional matching negative to start with 
+        #   \d+                 One or more digits
+        #   (?:                 Start non-capturing group for optional separator and more digits
+        #     (?:               Start non-capturing group for separator alternatives
+        #       (?<!\,)\,(?!\,) Single comma with no commas adjacent
+        #       |          - OR
+        #       (?<!\.)\.(?!\.) Single period with no periods adjacent
+        #     )                 End separator alternatives group
+        #     \d+               One or more digits
+        #   )*                  Allow multiple separator-number pairs
+        # )                     End main capturing group
+        pattern = r"####\s*(-?\d+(?:(?:(?<!\,)\,(?!\,)|(?<!\.)\.(?!\.))\d+)*)"
+
+        match_ = re.search(pattern, pred_answer_text)
+        if not match_:
             return {"answer_str_digit": INVALID_ANSWER}
 
-        last_match = matches[-1].replace("#", "").strip()
-        last_match = re.sub(r"(?<!\,)\,(?!\,)", "", last_match)
-        # TODO: add explanation for this pattern
+        candidate:str = match_.group(1)
+        candidate_wihout_comma = re.sub(r"(?<!\,)\,(?!\,)", "", candidate).strip()
 
-        # forward search to cover all digits after ####
-        candidate = ""
-        for i, c in enumerate(last_match):
-
-            if i == 0 and c == "-":
-                candidate += c
-                continue
-
-            if c in VALID_ANSWER_CHARS:
-                try:
-                    eval(candidate + c)
-                    candidate += c
-                except Exception:
-                    break
-            else:
-                break
-
-        if not candidate:
+        try:
+            eval(candidate_wihout_comma)
+            return {"answer_str_digit": candidate_wihout_comma}
+        except Exception:
             return {"answer_str_digit": INVALID_ANSWER}
-
-        return {"answer_str_digit": candidate}
 
     @classmethod
     def get_num_hops(cls, answer_text: str) -> Dict[str, int]:
@@ -156,7 +204,7 @@ class GSM8KParser:
         return {"num_hops": len(answer_text.strip().split("\n")) - 1}
 
     @classmethod
-    def parse_equations_from_gt(text: str) -> Dict[str, List[str]]:
+    def remove_equations_from_gt(cls, answer: str) -> Dict[str, List[str]]:
         """
         Extract list of equations from a string of text.
 
@@ -170,39 +218,26 @@ class GSM8KParser:
         List[str] | None
             The list of equations extracted from the text, or None if no equations were found
         """
-        pattern = r"<<(.+?)>>"
-        list_of_eqs = re.findall(pattern, text)
-        if not list_of_eqs:
-            raise ValueError("No equations found")
-
-        return {"equations": list_of_eqs}
+        pattern = r"<<.*?>>"
+        return {"answer": re.sub(pattern, "", answer)}
 
     @classmethod
-    def parse_equations_from_pred(cls, text: str) -> List[str]:
+    def parse_equations_from_pred(cls, text: str, include_text: bool=False) -> List[str]:
         """
-        Parse a given text and extract any mathematical equations from it.
+        Parse the equations from a string of text generated by the model.
 
-        The parsing is done using regular expressions.
-        First, we match any pattern that starts with at least one digit, followed by any characters.
-        This is the left side pattern.
+        Parameters
+        ----------
+        text : str
+            The string of text to extract equations from
+        include_text : bool
+            Whether to include the text in the equation or not
 
-        Once we meet an = sign, we then look for any characters followed by at least one digit.
-        This is the right side pattern.
-
-        Finally, we repeat the right side pattern indefinitely.
-
-        Then, for each matched string, we extract only the digits and mathematical operators
-        (+, -, *, /) and return it as a string.
-
-        Note: This parser only works for a single-line equations.
-
-        Args:
-            text (str): The text to parse.
-
-        Returns:
-            List[str]: A list of strings, where each string represents a mathematical equation.
+        Returns
+        -------
+        List[str]
+            The list of equations extracted from the text
         """
-        # Process each test string
         equations = []
 
         def extract_digits(text_with_digits: str) -> str:
@@ -227,7 +262,12 @@ class GSM8KParser:
         # 1. left side: matching the digits(continuous) + any chracters
         # 2. right side: matching the any character (continuous) + digits
         # 3. repeat the right side pattern indefinately
-        eq_pattern = r"(\d+.*?)=(.*?\d+)+"
+        # pattern explanation 
+        if include_text:
+            eq_pattern = r"\S*?(\d.*?\d+.*?)=(.*?\d+)+\S*?"
+        else:
+            eq_pattern = r"(\d+.*?)=(.*?\d+)+"
+
         regex = re.compile(eq_pattern)
         matches = list(regex.finditer(text))
         if not matches:
@@ -236,9 +276,13 @@ class GSM8KParser:
         for _, m in enumerate(matches):
             start, end = m.start(), m.end()
             matched_string = text[start:end]
-            equation = extract_digits(matched_string)
-            equations.append(equation)
+            if not include_text:
+                matched_string = extract_digits(matched_string)
+            equations.append(matched_string)
 
+        # dedup equations 
+        # we would like to make sure that there is no duplication of equations
+        # within the same completion (LLM does repeat sometime)
         equations = list(set(equations))
         return {"equations": equations}
 
@@ -293,6 +337,9 @@ class GMS8KEvaluator:
 
 if __name__ == "__main__":
 
+    ### Added a few test cases for you to play with 
+    ## =>=> python utils.py
+
     ex1 = """
     Together, they made 80+100 = <<80+100=180>>180 pizzas on the second day.
     In the two days, the two of them made a total of 180 +200 = <<180+200=380>>380 pizzas.
@@ -320,21 +367,24 @@ if __name__ == "__main__":
     # 1+1 = 3 
     # 3 + 2 = 5 
     # so bla bla bla
-    #### -78,000,000
+    #### 123
+    #### 78,000,000,,
     """
-    assert GSM8KParser.get_answer_from_gt(ex3) == {"answer_str_digit": "-78000000"}
+    assert GSM8KParser.get_answer_from_gt(ex3) == {"answer_str_digit": "78000000"}
     assert GSM8KParser.get_answer_from_pred(ex3) == {
-        "answer_str_digit": "-78000000"
+        "answer_str_digit": "78000000"
     }, print(GSM8KParser.get_answer_from_pred(ex3))
 
     ex4 = """
     # 1+1 = 3 
     #### perform calculation 
     #### here is the final answer
-    #### -78 
+    #### 78.5023419872983 
+
+    
     """
-    assert GSM8KParser.get_answer_from_gt(ex4) == {"answer_str_digit": "-78"}
-    assert GSM8KParser.get_answer_from_pred(ex4) == {"answer_str_digit": "-78"}, print(
+    assert GSM8KParser.get_answer_from_gt(ex4) == {"answer_str_digit": "78.5023419872983"}
+    assert GSM8KParser.get_answer_from_pred(ex4) == {"answer_str_digit": "78.5023419872983"}, print(
         GSM8KParser.get_answer_from_pred(ex3)
     )
 
@@ -348,5 +398,7 @@ if __name__ == "__main__":
 
     $4 * $5 + $6 * $7 = 12
     """
-    out = GSM8KParser.parse_equations_from_pred(text)
-    print(out)
+    out = GSM8KParser.parse_equations_from_pred(text, include_text=False)
+    print(f"Eqautions without text\n{out}")
+    out = GSM8KParser.parse_equations_from_pred(text, include_text=True)
+    print(f"Eqautions with text\n{out}")

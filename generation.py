@@ -1,4 +1,7 @@
 import datasets
+import os 
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+
 import torch
 from torch.utils.data import DataLoader
 from dataclasses import dataclass
@@ -8,7 +11,6 @@ from collections import defaultdict
 
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from transformers import PreTrainedTokenizer, PreTrainedModel
-from transformers.generation import GenerateDecoderOnlyOutput
 
 from data import GSM8KDataset
 from tqdm import tqdm 
@@ -20,12 +22,13 @@ from utils import (
 )
 from nltk import edit_distance
 from os import cpu_count 
+import tyro 
 import os 
 os.environ["TOKENIZERS_PARALLELISM"] = "true"
 
 WRONG_SOLUTIONS_PLACEHOLDER = "<NOWRONG SOLUTION>"
 
-def _socre_equations(equations: List[str], completions:List[str]) -> Tuple[int, int, int]:
+def _socre_equations(equations: List[str], beta_1:float=0.8,) -> Tuple[int, int, int]:
     """
     Scores the equations based on the pair-wise levenshtein distance
     and the number of lines in each equation. 
@@ -57,17 +60,17 @@ def _socre_equations(equations: List[str], completions:List[str]) -> Tuple[int, 
         max_dist = 1
     
     # ge the number of lines and normaliser as well
-    nlines = [len(comp.split("\n")) for comp in completions]
-    max_nlines = max(nlines)
-    if max_nlines == 0:
-        max_nlines = 1
+    eqs_lengths = [len(eq) for eq in equations]
+    max_length = max(eqs_lengths)
+    if max_length == 0:
+        max_length = 1
     
     for idx, score in distances.items():
         # here, we take the average of the levenshtein distance and the number of lines
         # since our equaiton parser is not perfect, we use the number of lines as well
         # as another proxy for the novelty of the overall solution
         # one could further tune such hyperparameters to make it more robust
-        distances[idx] = 0.5 * (score/max_dist) + 0.5 * nlines[idx]/max_nlines
+        distances[idx] = beta_1 * (score/max_dist) + (1-beta_1) * eqs_lengths[idx]/max_length
 
     max_idx = max(distances, key = distances.get)
     min_idx = min(distances, key = distances.get)
@@ -88,6 +91,7 @@ def get_generations(
     assert kwargs["return_dict_in_generate"]
     results = []
 
+    # create a non-shuffled dataloader in-place 
     data_loader = DataLoader(
         dataset, 
         batch_size=batch_size, 
@@ -116,7 +120,10 @@ def get_generations(
 def _filter_completions(
     sequences:torch.Tensor, 
     input_length:int,
-    tokenizer:PreTrainedTokenizer
+    tokenizer:PreTrainedTokenizer,
+    idx:int,
+    topk_dataset:GSM8KDataset,
+    include_text:bool=False,
     ) -> Tuple[List, List, List]: 
     
     # get the new tokens from generation
@@ -130,14 +137,17 @@ def _filter_completions(
     unique_correct_completions_eqs:List[str] = [] # reasoning traces/equations
 
     for _, completion in enumerate(completions):
-        
-        # parse the answer
+
+        # parse the answer (both pred and ground truth)
         answer = GSM8KParser.get_answer_from_pred(completion)
+        gold_answer = GSM8KParser.get_answer_from_gt(topk_dataset[idx]["answer"])
         
         # filter based on correcteness
-        if answer["answer_str_digit"] == INVALID_ANSWER:
+        if answer["answer_str_digit"] != gold_answer["answer_str_digit"]:
+            # final answer not aligned with gt 
             incorrect_completions.append(completion)
         else:
+            # final answer matches gt exactly
             # add only if not visited
             if completion not in correct_completions_visited:
                 correct_completions_visited.add(completion)
@@ -145,7 +155,10 @@ def _filter_completions(
 
                 # parse equations
                 equaiton_str = " ".join(
-                    GSM8KParser.parse_equations_from_pred(completion)["equations"]
+                    GSM8KParser.parse_equations_from_pred(
+                        completion, 
+                        include_text=include_text
+                    )["equations"]
                 )
                 unique_correct_completions_eqs.append(equaiton_str)
     
@@ -153,29 +166,36 @@ def _filter_completions(
 
 
 def generate_synthetic_data(
-    model:PreTrainedModel, 
     tokenizer:PreTrainedTokenizer, 
     dataset: GSM8KDataset, 
     name:str = "gsm8k",
     batch_size:int = 4,
+    generations_path:str = None,
+    model:PreTrainedModel = None,
+    beta_1:float = 0.8,
+    include_text:bool = False,
     **generation_config
 ) -> datasets.Dataset:
 
     questions:List[str] = []
+    questions_idx:List[int] = []
     favored_solutions: List[str] = []
     infavored_solutions: List[str] = []
     wrong_solutions: List[str] = []
     gaps:List[int] = []
     
-    # get the model generations
-    generations:List[torch.Tensor] = get_generations(
-        tokenizer, 
-        model, 
-        dataset, 
-        batch_size=batch_size,
-        **generation_config
-    )
-    save(f"generations/{name}_generations", generations)
+    if not generations_path:
+        # get the model generations
+        generations:List[torch.Tensor] = get_generations(
+            tokenizer, 
+            model, 
+            dataset, 
+            batch_size=batch_size,
+            **generation_config
+        )
+        save(f"generations/{name}_generations", generations)
+    else:
+        generations = load(generations_path)
 
     # split generations to per instance level
     sequences = []
@@ -198,6 +218,9 @@ def generate_synthetic_data(
             instance_sequences,
             dataset.max_length_question,
             tokenizer,
+            idx=i,
+            topk_dataset=dataset.dataset,
+            include_text=include_text,
         )
 
         # go to next instance if all failed
@@ -208,9 +231,10 @@ def generate_synthetic_data(
         # measure the utiliy of each completion according to their rationale
         ## one creteria could be the novelty of the equations
         questions.append(dataset[i]["question"])
+        questions_idx.append(i)
         best_idx, best_worst_idx, gap = _socre_equations(
             unique_correct_completions_eqs,
-            unique_correct_completions,
+            beta_1=beta_1
         )
         # best_idx: idx of the completion containing the most novel equation sets 
         # best_worst_idx: idx of the completion containing the least novel equation sets 
@@ -239,9 +263,13 @@ def generate_synthetic_data(
         else:
             wrong_solutions.append(incorrect_completions[0])
     
+    print(f"Mean Optimality Gap: {sum(gaps)/len(gaps)}")
+    print(f"Total Number of Accepted Completions: {len(questions)}")
+
     dataset = datasets.Dataset.from_dict(
         {
             "question": questions,
+            "question_idx": questions_idx, #QUESTION IDX in the sorted dataset!
             "favored_solutions": favored_solutions,
             "infavored_solutions": infavored_solutions,
             "wrong_solutions": wrong_solutions,
@@ -253,53 +281,90 @@ def generate_synthetic_data(
 
 if __name__ == "__main__":
 
+    @dataclass
+    class SyntheticDataConfig:
+
+        temperature: float = 0.7
+        """LLM Sampling Temperature"""
+
+        num_return_sequences: int = 5
+        """Number of samples to return for each instance"""
+
+        inference_batch_size:int = 2
+        """The batch size to use for inference"""
+
+        reject_sampling_percentage: float = 0.1
+        """Percentage of the top-tile instances (sorted in terms of hope length)
+        to participate in rejection sampling
+        """
+        
+        run_name:str = ""
+        """
+        The name of the run, which will be the name of the dataset saved
+        """
+
+        generation_path:str = ""
+        """
+        Path of the .pickle file storing the 
+        pre-loaded generatoins of the model
+        """
+
+        beta_1:float = 0.8
+        """Scoring weight on the Levenshtein distance of equations
+        The complementary term (1-beta_1) is the weight on the length of the equations
+        """
+
+        include_text:bool = False
+        """Wehther the equations parsed from the generated completions 
+        should include the text
+        """
+
+    args = tyro.cli(SyntheticDataConfig)
+
     # load the model
     MODEL_NAME = "microsoft/Phi-3.5-mini-instruct"
-    model:PreTrainedModel = AutoModelForCausalLM.from_pretrained(
-        MODEL_NAME,
-        device_map="auto",
-        torch_dtype=torch.bfloat16,
-        trust_remote_code=True,
-        attn_implementation="flash_attention_2",
-    )
+    model = None
+    if not args.generation_path:
+        model:PreTrainedModel = AutoModelForCausalLM.from_pretrained(
+            MODEL_NAME,
+            device_map="auto",
+            torch_dtype=torch.bfloat16,
+            trust_remote_code=True,
+            attn_implementation="flash_attention_2",
+        )
     tokenizer:PreTrainedTokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
 
     # get the train dataset
     train_dataset = datasets.load_dataset('gsm8k', 'main')['train']
+    
+    # NOTE:
     # we use the number of hops to filter the difficulty of the instances
     # and we want our rejection sampling to focus on those part more 
-    # (due to limited computational power)
+    # (due to limited computational power and time)
     train_dataset = train_dataset.map(
         lambda x: GSM8KParser.get_num_hops(x['answer'])
     )
-    train_dataset = train_dataset.sort(column_names="num_hops", reverse=True)
-
-    @dataclass
-    class SyntheticDataConfig:
-        temperature: float = 0.7
-        num_return_sequences: int = 5
-        batch_size:int = 2
-        reject_sampling_percentage: float = 0.1
-        num_reject_samples: int = int(len(train_dataset)*reject_sampling_percentage)
-        run_name = f"gsm8k_synthetic_data_{num_reject_samples}instances_{num_return_sequences}samples"
-
+    sorted_train_dataset = train_dataset.sort(column_names="num_hops", reverse=True)
     # select the top-K instances for rejection sampling
-    train_dataset = train_dataset.select(
+    top_k_train_dataset = sorted_train_dataset.select(
         range(
             int(
-                len(train_dataset)*SyntheticDataConfig.reject_sampling_percentage
+                len(sorted_train_dataset)*args.reject_sampling_percentage
             )
         )
     )
-    TrainData = GSM8KDataset(train_dataset, tokenizer)
-    print(f"Selected {len(train_dataset)} instances for rejection sampling out of {len(train_dataset)}")
-    print(f"Each instance will generate {SyntheticDataConfig.num_return_sequences} completions")
+    TopKTrainData = GSM8KDataset(top_k_train_dataset, tokenizer)
+    
+    num_input_samples = len(TopKTrainData)
+    args.run_name += f"gsm8k_synthetic_data_{num_input_samples}instances_{args.num_return_sequences}samples"
+    print(f"Selected {num_input_samples} instances for rejection sampling")
+    print(f"Each instance will generate {args.num_return_sequences} completions")
 
     # Generation Config 
     generation_config = {
-        "max_new_tokens" : TrainData.inf_seq_length,
-        "temperature": SyntheticDataConfig.temperature,
-        "num_return_sequences": SyntheticDataConfig.num_return_sequences,
+        "max_new_tokens" : TopKTrainData.inf_seq_length,
+        "temperature": args.temperature,
+        "num_return_sequences": args.num_return_sequences,
         "eos_token_id":tokenizer.eos_token_id,  # Specify the EOS token
         "pad_token_id":tokenizer.eos_token_id, 
         "do_sample":True,
@@ -308,18 +373,23 @@ if __name__ == "__main__":
     }
 
     # compile to further accelerate inference 
-    model.eval()
-    model = torch.compile(model)
+    if not args.generation_path:
+        model.eval()
+        model = torch.compile(model)
 
     # generate the dataset
     dataset = generate_synthetic_data(
-        model, 
         tokenizer, 
-        TrainData,
-        name=SyntheticDataConfig.run_name,
-        batch_size=SyntheticDataConfig.batch_size,
+        TopKTrainData,
+        name=args.run_name,
+        batch_size=args.inference_batch_size,
+        generations_path=args.generation_path,
+        model = model,
+        beta_1=args.beta_1,
+        include_text=args.include_text,
         **generation_config,
     )
     
-    # save the dataset
-    dataset.save_to_disk(SyntheticDataConfig.run_name)
+    # save the datasets
+    dataset.save_to_disk(f"datasets/{args.run_name}")
+    TopKTrainData.dataset.save_to_disk(f"datasets/topk_dataset_{args.run_name}")

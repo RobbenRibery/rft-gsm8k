@@ -1,15 +1,9 @@
-from typing import Dict, List, Any, Tuple
 import os
-import torch
-from pathlib import Path
+from typing import List, Dict, Any 
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
-import pytorch_lightning as pl
-from pytorch_lightning.callbacks import (
-    ModelCheckpoint, 
-    EarlyStopping,
-    RichProgressBar,
-)
-from pytorch_lightning.loggers import WandbLogger
+import torch
+from torch.nn import CrossEntropyLoss
 from lightning.pytorch import seed_everything
 
 import datasets
@@ -19,428 +13,458 @@ from transformers import (
     PreTrainedModel, 
     PreTrainedTokenizer, 
     BitsAndBytesConfig,
-    get_cosine_schedule_with_warmup
+    TrainingArguments,
 )
+from transformers.data.data_collator import DataCollatorMixin
 
 from peft import (
     LoraConfig,
     TaskType,
     prepare_model_for_kbit_training,
-    get_peft_model,
-    peft_model,
 )
 
-import bitsandbytes as bnb
-
+from trl import SFTTrainer
 from dataclasses import dataclass
 
-from data import GSM8KDataset
-from utils import (
-    INVALID_ANSWER,
-    GMS8KEvaluator, 
-    GSM8KParser, 
-    sample_answers,
-)
+from data import GSM8KDataset, filter_dataset
+from utils import GSM8KParser, sample_answers
 from torch.utils.data import DataLoader
+from tqdm import tqdm
+import pandas as pd  
+
 import tyro
+os.environ["TOKENIZERS_PARALLELISM"] = "true"
 
 @dataclass
 class TrainingConfig:
-    learning_rate: float = 5e-03
-    weight_decay: float = 0.01
-    batch_size:int = 64
-    max_n_epochs: int = 1
-    gradient_accum_steps: int = 8
-    val_interval:float = 0.1
 
+    learning_rate: float = 1e-03
+    """Learning rate during training"""
+
+    batch_size:int = 32
+    """Per-device batch size"""
+
+    max_n_epochs: int = 1
+    """"Maximum number of epochs"""
+
+    gradient_accum_steps: int = 1
+    """Number of gradient accumulation steps"""
+
+    val_interval:float = 0.05
+    """Percentage of steps trigeering validation"""
 
 @dataclass
 class GenerationConfig:
+
     max_new_tokens: int = 1024
+    """"
+    Maxium number of new tokens to generate
+    (This will override the max_if_length
+    """
     temperature: float = 0.2
-    top_p: float = 0.9
+    """Sampling Temperature during inference"""
+
     return_dict_in_generate: bool = True
+    """"Return inference results as a dictionary or not"""
+
+    num_return_sequences:int = 1
+    """Number of completions to generate"""
+
+    do_sample: bool = True
+    """Use sampling during inference"""
 
 @dataclass
-class LoraConfig:
+class LoraLayersConfig:
+    
     task_type: TaskType = TaskType.CAUSAL_LM
-    r: int = 32
-    lora_alpha: int = 32
-
+    """Task type for LoRA training"""
+    
+    r: int = 16
+    """"Rank of the LoRa matrices"""
+    
+    lora_alpha: int = int(r*0.8)
+    """"Scaling factor"""
+    
+    use_rslora:bool = True 
+    """"
     #https://arxiv.org/pdf/2312.03732 sugges that rslora would 
     # yield better distinction when ranks go up
-    use_rslora:bool = True 
-    
-    lora_dropout: float = 0.05
+    """
+
+    lora_dropout: float = 0.1
+    """"Dropout probability for LoRA layers"""
+
     bias: str = "none"
-    inference_mode: bool = False
-
-class LoraLit(pl.LightningModule):
-
-    def __init__(
-        self,
-        model_name: str,
-        train_dataset: GSM8KDataset,
-        training_config: TrainingConfig,
-        generation_config: GenerationConfig,
-        lora_config: LoraConfig,
-        lora_target_modules:List[str] = [
-            "gate_proj", 
-            "down_proj", 
-            "up_proj"
-        ],
-        model_output_dir: str = "model_output",
-        test_base_model:bool = False,
-    ):
-        super().__init__()
-
-        self.model_name = model_name
-
-        self.train_config = training_config
-        self.lora_config = lora_config
-        self.generation_config = generation_config
-        self.lora_target_modules = lora_target_modules
-
-        self.train_dataset = train_dataset
-
-        self.model_output_dir = Path(model_output_dir)
-        self.model_output_dir.mkdir(parents=True, exist_ok=True)
-
-        self.test_base_model = test_base_model
-        
-        # Save hyperparameters
-        self.save_hyperparameters("train_config", "lora_config", "generation_config")
-
-        # Load model and tokenizer 
-        self.toknizer: PreTrainedTokenizer = AutoTokenizer.from_pretrained(model_name)
-
-        # quantization config 
-        self.bb_config = BitsAndBytesConfig(
-            bnb_4bit_quant_type="nf4",
-            bnb_4bit_use_double_quant=True,
-            bnb_4bit_compute_dtype=torch.bfloat16
-        )
-        self.model: PreTrainedModel = AutoModelForCausalLM.from_pretrained(
-            model_name,
-            device_map="auto",
-            quantization_config = self.bb_config,
-            trust_remote_code=True,
-            torch_dtype=torch.bfloat16,
-            attn_implementation="flash_attention_2",
-        )
-
-        # Lora config
-        lora_config = LoraConfig(
-            target_modules = self.lora_target_modules,
-            **self.lora_config().__dict__
-        )
-
-        # Quantization
-        self.model = prepare_model_for_kbit_training(
-            self.model,
-            use_gradient_checkpointing=True,
-        )
-        self.model:peft_model.PeftModel = get_peft_model(self.model, lora_config)
-
-        # Evaluator
-        self.evaluator = GMS8KEvaluator()
-
-        # Buffers
-        self.train_step_outs = []
-        self.val_step_outs = []
-        self.test_step_outs = []
-
-    def forward(
-        self, 
-        input_ids:torch.Tensor, 
-        attention_mask:torch.Tensor=None, 
-        labels:torch.Tensor=None
-        ):
-        return self.model(
-            input_ids=input_ids, 
-            attention_mask=attention_mask, 
-            labels=labels
-        )
-    
-    ## -- check pointing -- ## 
-    def on_load_checkpoint(self, checkpoint):
-        checkpoint.update({
-            'model_name': self.model_name,
-            'peft_state_dict': self.model.state_dict(),
-            'model_output_dir': str(self.model_output_dir)
-        })
-        
-        # Save adapter weights alongside checkpoint
-        adapter_path = Path(self.trainer.checkpoint_callback.dirpath) / f"adapter_epoch_{self.current_epoch}"
-        self.model.save_pretrained(adapter_path)
-
-    def on_load_checkpoint(self, checkpoint):
-        self.model.load_state_dict(checkpoint['peft_state_dict'])
-        self.model_output_dir = Path(checkpoint['model_output_dir'])
-
-    ## -- trian steps -- ## 
-    def training_step(self, batch, batch_idx):
-        outputs = self(
-            input_ids=batch["input_ids"],
-            attention_mask=batch["attention_mask"],
-            labels=batch["labels"],
-        )
-
-        # Log the loss
-        self.log("train/train_loss_step", outputs.loss, prog_bar=True, on_step=True, logger=True)
-        return {"train_loss": outputs.loss}
-    
-    def training_epoch_end(self, outputs):
-        avg_loss = torch.stack([x["train_loss"] for x in outputs]).mean()
-        self.log("train/train_loss_epoch", avg_loss, prog_bar=True, on_epoch=True, logger=True)
-
-    def on_train_end(self):
-        
-        # define paths
-        final_adapter_path = self.model_output_dir / "final_adapter"
-        final_model_path = self.model_output_dir / "final_model"
-
-        # save the adapter
-        self.model.save_pretrained(final_adapter_path)
-
-        # save configs 
-        config = {
-            "model_name": self.model_name,
-            "adapter_path": str(final_adapter_path),
-            "merged_path": str(final_model_path)
-        }
-        torch.save(config, self.save_path / "model_config.pt")
-        
-        # merge and save
-        merged_model = self.model.merge_and_unload()
-        merged_model.save_pretrained(self.save_path / final_model_path)
-        print(f"Merged model saved to {final_model_path}")
-
-    ## -- validation steps -- ##
-    def validation_step(self, batch, batch_idx):
-        outputs = self(
-            input_ids=batch["input_ids"],
-            attention_mask=batch["attention_mask"],
-            labels=batch["labels"],
-        )
-        # Log the validation loss
-        self.log("train/val_loss_step", outputs.loss, prog_bar=True, on_step=True, logger=True)
-        return {"val_loss": outputs.loss}
-
-    def validation_epoch_end(self, outputs):
-        avg_loss = torch.stack([x["val_loss"] for x in outputs]).mean()
-        self.log("train/val_loss_epoch", avg_loss, prog_bar=True, on_epoch=True, logger=True)
+    """"Whether to include bias in LoRA layers"""
 
 
-    ## -- test steps -- ##
-    def on_test_start(self):
-
-        if self.test_base_model:
-            self.model.eval()
-            return 
-
-        # load the config first 
-        config_path = self.model_output_dir / "model_config.pt"
-        config = torch.load(config_path)
-
-        # load the trained model 
-        self.model = AutoModelForCausalLM.from_pretrained(
-            config["merged_path"],
-            device_map="auto",
-            torch_dtype=torch.bfloat16
-        )
-        self.model.eval()
-
-
-    def test_step(self, batch: Dict[str, torch.Tensor], batch_idx: int) -> None:
-
-        assert self.generation_config["num_return_sequences"] == 1
-        input_ids = batch["question_input_ids"]
-        attention_mask = batch["question_attention_mask"]
-        refs = batch["answer_str_digit"]
-
-        outs: List[str] = sample_answers(
-            self.toknizer,
-            self.model,
-            input_ids=input_ids,
-            attention_mask=attention_mask,
-            **self.generation_config,
-        )
-
-        # calculate maj@1
-        preds = [
-            GSM8KParser.get_answer_from_pred(out)["answer_str_digit"] \
-            for out in outs
-        ]
-        maj_accs = [
-            self.evaluator.get_maj_at_k(pred, ref) \
-            for pred, ref in zip(preds, refs)
-        ]
-        self.test_step_outs.extend(maj_accs)
-        self.log_dict(
-            {"test/maj@1_step": torch.tensor(maj_accs).float().mean()},
-            prog_bar=True,
-            logger=True,
-            on_step=True,
-        )
-
-    def on_test_epoch_end(self):
-        epoch_mean_maj_accs = torch.tensor(self.test_step_outs).float().mean()
-        self.log_dict(
-            {"test/maj@1_epoch": epoch_mean_maj_accs},
-            prog_bar=True,
-            logger=True,
-            on_epoch=True,
-        )
-        self.test_step_outs.clear()
-
-    ## -- Optimization -- ## 
-    def configure_optimizers(self):
+@dataclass
+class PreprocessedCollator(DataCollatorMixin):
+    """
+    A minimal collator for datasets that are already tokenized and padded.
+    """
+    def __call__(self, features, return_tensors=None):
         """
-        Configure optimizer and learning rate scheduler
+        Dummy Collator for datasets that are already tokenized and padded.
+
+        Args:
+            features: A list of dictionaries containing the features for each sample.
+                (each feature should have input_ids, attention_mask, labels as keys)
+            return_tensors: Whether to return the batch as tensors or not. Defaults to None.
 
         Returns:
-            Optimizer and learning rate scheduler
+            A dictionary with the batched features.
         """
-        # Prepare optimizer we use 8bit to save memory
-        optimizer = bnb.optim.Adam8bit(
-            self.parameters(),
-            lr=self.train_config.learning_rate,
-            weight_decay=self.train_config.weight_decay,
-        )
-        total_training_steps = (
-            len(self.train_dataset)//self.train_config.batch_size
-        )*self.train_config.max_n_epochs
-    
-        #  Prepare learning rate scheduler
-        scheduler = get_cosine_schedule_with_warmup(
-            optimizer,
-            num_training_steps=total_training_steps,
-            num_warmup_steps=int(total_training_steps*0.02)
-        )
+        batch = {}
+        for k in list(features[0].keys()):
+            if k in {"input_ids", "attention_mask", "labels", "weights"}:
+                batch[k] = torch.stack([f[k] for f in features])
+                
+        return batch
 
-        return {"optimizer": optimizer, "lr_scheduler": scheduler}
 
+class WeightedTrainer(SFTTrainer):
+    """
+    Trainer accepting wegihted samples
+    """
+
+    def compute_loss(self, model:PreTrainedModel, inputs:Dict[str, Any], return_outputs=False, num_items_in_batch=None):  
+        """
+        Computes the loss for a given model and inputs with optional weighting.
+
+        Args:
+            model (PreTrainedModel): The model to compute the loss with.
+            inputs (Dict[str, Any]): The input data for the model, containing
+                features like input_ids, attention_mask, and optionally 'weights'.
+            return_outputs (bool, optional): If True, returns both the loss and the
+                model outputs. Defaults to False.
+            num_items_in_batch (int, optional): Number of items in the batch, used
+                for adjusting loss scaling.
+
+        Returns:
+            Union[torch.Tensor, Tuple[torch.Tensor, Any]]: The computed loss, and
+            optionally the model outputs if return_outputs is True.
+
+        Notes:
+            - If 'weights' are provided in inputs, they are used to compute a
+            weighted loss.
+            - Applies CrossEntropyLoss with no reduction and adjusts the loss using
+            the provided weights.
+            - Supports model parallelism by ensuring the shifted labels and logits
+            are on the same device.
+            - Adjusts for tokens with label -100 by masking them in the loss.
+            - Loss is averaged over non-zero elements and adjusted for device
+            parallelism if enabled.
+        """
+        weights = inputs.pop("weights", None)
+        
+        if weights is None:
+            outputs = model(**inputs)
+            if return_outputs:
+                return outputs.loss, outputs  # Return both loss and outputs for evaluation
+            return outputs.loss
+
+        labels = inputs.pop("labels")
+        outputs = model(**inputs)
+        logits = outputs.logits
+        del outputs 
+
+        # Shift so that tokens < n predict n
+        shift_logits = logits[..., :-1, :].contiguous()
+        shift_labels_ = labels[..., 1:].contiguous()
+        # Flatten the tokens
+        loss_fct = CrossEntropyLoss(reduction="none")
+        shift_logits = shift_logits.view(-1, self.model.vocab_size)
+        shift_labels = shift_labels_.view(-1)
+        # Enable model parallelism
+        shift_labels = shift_labels.to(shift_logits.device)
+        loss = loss_fct(shift_logits, shift_labels)
+        # flip back to (B, T)
+        loss = loss.view(logits.shape[0], logits.shape[1]-1)
+        # truncat the section of -100 labels 
+        loss = loss.masked_fill(shift_labels_ == -100, 0.0)
+
+        # adjust according to weights
+        loss *= weights 
+        # mean reduction by ignoreing masked elements
+        loss = loss.sum()/(loss != 0).sum()
+
+        del weights, shift_labels, shift_logits, shift_labels_, inputs
+        
+        if self.args.average_tokens_across_devices and self.model_accepts_loss_kwargs:
+            loss *= self.accelerator.num_processes
+
+        return (loss, outputs) if return_outputs else loss
 
 if __name__ == "__main__":
     
-    # Cli 
     @dataclass
     class Args: 
-        rft_data_path: str = "gsm8k_synthetic_data_74instances_5samples"
+
+        evaluate: bool = True
+        """Whether to perform evaluation or not"""
+
+        train:bool = True
+        """Whether to perform training or not"""
+
+        model_name:str = "microsoft/Phi-3.5-mini-instruct"
+        """Name of the model to be loaded"""
+
+        rft_data_path: str = "corrected-pred-parser-1.0lev-gsm8k_synthetic_data_747instances_5samples"
         """Path to the RFT dataset, sampled from the base model"""
 
-        test_base_model:bool = False
-        """Only test the base model"""
+        use_rft_data_only:bool = False
+        """Whether to use only the RFT data for training or not"""
 
-        run_name: str = None 
-        """Name of the run to log to wandb"""
+        use_weighted_training:bool = False
+        """Whether to use higher weight on the RFT data for training or not"""
+
+        run_name: str = ""
+        """base name of the run"""
 
         seed:int = 42
         """Mannual Seed for the run"""
 
     # parse
     args = tyro.cli(Args)
+    if args.train:
+        assert args.run_name, "Please provide a name for the training run"
+        assert not args.train or not args.evaluate, "Cannot train and evaluate at the same time"
 
     # seeding
     seed_everything(args.seed)
 
     # load the rft data if provided
-    if args.rft_data_path:
+    if args.rft_data_path and args.train:
         rft_data = datasets.load_from_disk(args.rft_data_path)
+        print(f"RFT:\n")
+        print(f"Loaded {len(rft_data)} instances from {args.rft_data_path}")
         rft_data = rft_data.rename_column("favored_solutions","answer")
-        args.run_name = "qlora_rft_"+args.rft_data_path.split("_")[-2]
-    else:
-        args.run_name = "qlora_sft"
-
-    # setup
-    MODEL_NAME = "microsoft/Phi-3.5-mini-instruct"
-    tokenizer:PreTrainedTokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
+        rft_data = rft_data.select_columns(["question", "answer"])
+        args.run_name += "qlora_rft_"+args.rft_data_path.split("_")[-2]
     
-    # Get Train & Val DataLoader
+    if not args.rft_data_path and args.train:
+        print(f"SFT:\n")
+        args.run_name += "qlora_sft"
+
+    # load tokenizer
+    tokenizer:PreTrainedTokenizer = AutoTokenizer.from_pretrained(args.model_name)
+    tokenizer.pad_token = tokenizer.eos_token
+    
+    # ---------- Datasets ---------- # 
     train_dataset = datasets.load_dataset('gsm8k', 'main')['train']
+    org_len = len(train_dataset)
+    
+    # We first remove the equation tags from the ground truth
+    ## doing this since the base model cannot generate <<equation>> 
+    ## and seems to perform reasoning correctly based on the natural language
+    ## pattern effectively, we remove the equations from the ground truth
+    ## to prevent potential confusion to the model during fine-tuning
+    train_dataset = train_dataset.map(
+        lambda x: GSM8KParser.remove_equations_from_gt(x["answer"])
+    )
+    if args.rft_data_path and args.train:
+        if args.use_rft_data_only:
+            # filter the original train dataset from the train dataset first 
+            train_dataset = rft_data
+        else:
+            if args.use_weighted_training:
+                # add normalised weights to the train dataset
+                rft_weight = int(org_len / rft_data.shape[0])
+                print(f"### applied weighted training on RFT data with unormalised weight: {rft_weight}")
+                rft_data = rft_data.map(
+                    lambda x : {"weights": torch.full((1, ), rft_weight)} 
+                )
+                train_dataset = train_dataset.map(
+                    lambda x : {"weights": torch.full((1, ), 1)} 
+                )
+            
+            train_dataset = filter_dataset(train_dataset, rft_data["question"], column_to_filter="question")
+            train_dataset = datasets.concatenate_datasets([train_dataset, rft_data])
+            assert len(train_dataset) == org_len, print(f"Expecting: {org_len}, Received: {len(train_dataset)}")
+
     TrainData = GSM8KDataset(train_dataset, tokenizer)
+    
     TrainLoader = DataLoader(
-        train_dataset,
+        TrainData,
         batch_size=TrainingConfig.batch_size,
         shuffle=True,
-        num_workers= os.cpu_count(),
+        num_workers=os.cpu_count(),
+        pin_memory=False, 
+        persistent_workers=True 
+    )
+    print(f"Train size: {len(train_dataset)}")
+
+    # split the test into val and test
+    test_dataset = datasets.load_dataset('gsm8k', 'main')['test']
+    test_dataset = test_dataset.map(
+        lambda x: GSM8KParser.remove_equations_from_gt(x["answer"])
     )
 
-    val_dataset = datasets.load_dataset('gsm8k', 'main')['test']
+    splitted_test = test_dataset.train_test_split(
+        test_size=0.9, 
+        seed= args.seed,
+        shuffle=True,
+    )
+
+    # val data 
+    val_dataset = splitted_test["train"]
     ValData = GSM8KDataset(val_dataset, tokenizer)
     ValLoader = DataLoader(
-        val_dataset,
-        batch_size=TrainingConfig.batch_size,
+        ValData,
+        batch_size=TrainingConfig.batch_size*2,
         shuffle=False,
         num_workers= os.cpu_count(),
     )
+    print(f"Val size: {len(ValData)}")
 
-    LoraModel = LoraLit(
-        model_name=MODEL_NAME,
-        model_output_dir="./{args.run_name}",
-        train_dataset=TrainData,
-        training_config=TrainingConfig,
-        generation_config=GenerationConfig,
-        lora_config=LoraConfig,
-        lora_target_modules=[
-            "gate_proj", 
-            "down_proj", 
-            "up_proj"
-        ],
-        test_base_model=args.test_base_model,
-    )
+    # test data
+    test_dataset = splitted_test["test"]
+    TestData = GSM8KDataset(test_dataset, tokenizer)
+    print(f"Test size: {len(TestData)}")
 
-    # logg to wandb
-    wandb_logger = WandbLogger(
-        project="phi3-gsm8k-rft", 
-        log_model="all",
-        name=args.run_name,
-    )
+    # train vs eval
+    if args.train:
 
-    # callbacks
-    pbar = RichProgressBar()
-
-
-    # callbacks
-    ckpts = ModelCheckpoint(
-        dirpath="./checkpoints",
-        filename="{epoch}-{val_loss:.2f}",
-        save_last=True,
-        save_top_k=1,
-        enable_version_counter=True,
-    )
-
-    early_stop = EarlyStopping(
-        monitor="train/val_loss_step",
-        mode="min",
-        patience=3,
-    )
-
-    # trainer
-    trainer = pl.Trainer(
-        accelerator="auto",
-        strategy="auto",
-        devices="auto",
-        logger=wandb_logger,
-        callbacks=[pbar],
-        max_epochs=TrainingConfig.max_n_epochs,
-        min_epochs=1,
-        accumulate_grad_batches= TrainingConfig.gradient_accum_steps,
-        precision="bf16",
-        val_check_interval= TrainingConfig.val_interval,
-        log_every_n_steps=1,
-        enable_progress_bar=True,
-        deterministic=True,
-    )
-
-    if args.test_base_model:
-        trainer.test(LoraModel, dataloaders=ValLoader)
-
-    else:
-        trainer.fit(
-            LoraModel,
-            train_dataloader=TrainLoader,
-            val_dataloaders=ValLoader
+        # quantization config 
+        bb_config = BitsAndBytesConfig(
+            load_in_4bit=True,
+            bnb_4bit_quant_type="nf4",
+            bnb_4bit_use_double_quant=True,
+            bnb_4bit_compute_dtype=torch.bfloat16,
         )
-        best_lora = trainer.test(ckpt_path="best")
+        # peft config
+        lora_config = LoraConfig(
+            target_modules = [
+                "gate_proj", 
+                "down_proj", 
+                "up_proj",
+                "k_proj", 
+                "q_proj", 
+                "v_proj", 
+                "o_proj", 
+            ],
+            **LoraLayersConfig().__dict__,
+        )
+
+        # model
+        model: PreTrainedModel = AutoModelForCausalLM.from_pretrained(
+            "microsoft/Phi-3.5-mini-instruct",
+            quantization_config = bb_config,
+            trust_remote_code=True,
+            attn_implementation="flash_attention_2",
+        )
+
+        model = prepare_model_for_kbit_training(
+            model,
+            use_gradient_checkpointing=True,
+        )
+
+        ## TrainingArgs
+        training_args = TrainingArguments(
+            output_dir=f"models/{args.run_name}",
+            per_device_train_batch_size=TrainingConfig.batch_size,
+            per_device_eval_batch_size=TrainingConfig.batch_size*2,
+            gradient_accumulation_steps=TrainingConfig.gradient_accum_steps,
+            gradient_checkpointing=True,
+            optim="adamw_8bit",
+            save_strategy="epoch",
+            learning_rate=TrainingConfig.learning_rate,
+            bf16=True,
+            tf32=False,
+            warmup_ratio=0.03,
+            lr_scheduler_type="cosine",
+            report_to="wandb",
+            eval_strategy="steps",
+            eval_steps=TrainingConfig.val_interval,
+            logging_steps=1,
+            remove_unused_columns=False,
+            num_train_epochs=TrainingConfig.max_n_epochs,
+            
+        )
+
+        ## Perform Training 
+        TrainerClass = WeightedTrainer if args.use_weighted_training else SFTTrainer
+        trainer = TrainerClass(
+            model=model,
+            peft_config=lora_config,
+            train_dataset=TrainData,
+            eval_dataset=ValData,
+            max_seq_length=TrainData.max_length,
+            args=training_args,
+            data_collator=PreprocessedCollator(),
+            packing=False,
+        )
+
+        trainer.model.print_trainable_parameters()
+        trainer.train()
+        trainer.save_model(output_dir=f"models/{args.run_name}")
+        print(f"### Model saved to models/{args.run_name} ###")
+
+    if args.evaluate:
+
+        if 'Phi-3.5' in args.model_name and not args.train:
+            model: PreTrainedModel = AutoModelForCausalLM.from_pretrained(
+                "microsoft/Phi-3.5-mini-instruct",
+                trust_remote_code=True,
+                torch_dtype=torch.bfloat16,
+                device_map="auto",
+                attn_implementation="flash_attention_2",
+            )
+        else:
+            model = AutoModelForCausalLM.from_pretrained(
+                args.model_name,
+                torch_dtype=torch.bfloat16,
+                device_map="auto",
+                attn_implementation="flash_attention_2",
+            )
+
+        print(f"#### Start evaluating {args.model_name} ####")
+        model.to(torch.bfloat16)
+        model.eval()
+        model = torch.compile(model)
+
+        test_loader = DataLoader(
+            TestData,
+            batch_size=32,
+            shuffle=False,
+            num_workers= os.cpu_count(),
+        )
+
+        maj_1s:List[float] = []
+        questions:List[str] = []
+        sampled_completions:List[str] = []
+        ground_truth_completions:List[str] = []
+
+        for i, batch in tqdm(enumerate(test_loader)):
+            outstrings:List[str] = sample_answers(
+                tokenizer,
+                model,
+                input_ids=batch["question_input_ids"],
+                attention_mask=batch["question_attention_mask"],
+                **GenerationConfig().__dict__,
+            )
+            preds = [GSM8KParser.get_answer_from_pred(pred)["answer_str_digit"] for pred in outstrings]
+            labels = batch["answer_str_digit"]
+
+            maj_1s.extend(
+                [1 if pred == label else 0 for pred, label in zip(preds, labels)]
+            )
+            print(f"Batch {i} maj@1 -> {sum(maj_1s)/len(maj_1s)}")
+            sampled_completions.extend(outstrings)
+            ground_truth_completions.extend(batch["answer"])
+            questions.extend(batch["question"])
+
+        print(f"Maj@1: {sum(maj_1s)/len(maj_1s)}")
+        df = pd.DataFrame.from_dict(
+            {   
+                "questions": questions,
+                "sampled_completions": sampled_completions,
+                "ground_truth_completions": ground_truth_completions,
+                "maj_1s": maj_1s,
+            }
+        )
+        out_path_ = f"results/{args.model_name.replace('/', '-')}_{args.run_name.replace('/', '-')}.csv"
+        df.to_csv(out_path_, index=False)
+        print(f"#### Results saved to {out_path_}")
+

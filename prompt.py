@@ -63,22 +63,3 @@ NOTE:
 ```
 """
 ).strip()
-
-
-# class RejectSamplingTemplate(EvalTemplateExp):
-
-#     user = dedent(
-# """
-# *Task*    
-# Think step by step to solve the following question, be as detailed as possible:
-# ```question
-# {question}
-# ```
-
-# *Format*
-# 1. Submit the final answer with PURE DIGITS in a seperate new line starting with "####", proceeded by <|end|>
-# i.e. if the answer is £10, then write:"\n#### 10 <|end|>"
-
-# 2. Write equations in a single line wihtout line breaks in the middle. Change line after completing an equation.
-# """
-#     ).strip()

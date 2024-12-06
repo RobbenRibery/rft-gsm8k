@@ -12,3 +12,4 @@ nltk
 tyro
 isort
 black
+deepspeed

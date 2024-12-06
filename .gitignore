@@ -165,3 +165,16 @@ cython_debug/
 *.txt
 !requirementx.txt
 wandb
+qlora_rft_747instances
+[ffn]-lora-16r-16alpha_rft_747instances/
+[attn-ffn]-lora-64r-64alpha_rft_747instances/
+*.md 
+*.json 
+*.safetensors
+*pt 
+*pth 
+*.bin 
+checkpoint
+latest
+zero_to_fp32.py
+*.arrow
