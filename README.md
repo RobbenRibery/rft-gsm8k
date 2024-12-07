@@ -18,7 +18,7 @@ I used the rest of 90% as the hold-out test set, to some extent avoiding my own 
 (But in a more formal setting giving more time, we still have to evaluate on the remaining 10% of the test set)
 
 ## Further Considerations:
-In [Yuan et,al](https://arxiv.org/pdf/2308.01825), each question $q_i$ is used to generate a reasoning paths that is used to generate a prediction. However, sampling $k$ reasoning paths for every single question is very computationally intense. The author also mentions that it's very time-consuming. 
+In [Yuan et,al](https://arxiv.org/pdf/2308.01825), each question $q_{i}$ is used to generate a reasoning paths that is used to generate a prediction. However, sampling $k$ reasoning paths for every single question is very computationally intense. The author also mentions that it's very time-consuming. 
 
 Thus I wanted to see if I could achieve improvements by only using the most "useful" questions (i.e. only the top 10% most useful chunck) to perform rejection sampling, making RFT more data efficient.
 
