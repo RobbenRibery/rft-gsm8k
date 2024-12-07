@@ -14,3 +14,5 @@ isort
 black
 deepspeed
 seaborn 
+peft
+trl 
