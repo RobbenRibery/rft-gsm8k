@@ -170,7 +170,6 @@ qlora_rft_747instances
 [attn-ffn]-lora-64r-64alpha_rft_747instances/
 models
 !README.md
-*.json 
 *.safetensors
 *pt 
 *pth 
@@ -178,4 +177,4 @@ models
 checkpoint
 latest
 zero_to_fp32.py
-*.arrow
+!datasets/

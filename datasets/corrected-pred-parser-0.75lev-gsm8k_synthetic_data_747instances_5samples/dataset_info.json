@@ -1,0 +1,32 @@
+{
+  "citation": "",
+  "description": "",
+  "features": {
+    "question": {
+      "dtype": "string",
+      "_type": "Value"
+    },
+    "question_idx": {
+      "dtype": "int64",
+      "_type": "Value"
+    },
+    "favored_solutions": {
+      "dtype": "string",
+      "_type": "Value"
+    },
+    "infavored_solutions": {
+      "dtype": "string",
+      "_type": "Value"
+    },
+    "wrong_solutions": {
+      "dtype": "string",
+      "_type": "Value"
+    },
+    "favored_infavored_gaps": {
+      "dtype": "float64",
+      "_type": "Value"
+    }
+  },
+  "homepage": "",
+  "license": ""
+}
