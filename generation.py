@@ -215,6 +215,7 @@ def generate_synthetic_data(
     model:PreTrainedModel = None,
     beta_1:float = 0.8,
     include_text:bool = False,
+    use_org_data:bool = False,
     **generation_config
 ) -> datasets.Dataset:
     """
@@ -302,6 +303,14 @@ def generate_synthetic_data(
         # go to next instance if all failed
         if not unique_correct_completions:
             print(f"No correct completions for istance {i}")
+            if use_org_data:
+                num_hops = GSM8KParser.get_num_hops(dataset.dataset[i]["answer"])["num_hops"]
+                print(f"Replace with original data for instance {i} @ hops: {num_hops}")
+                questions.append(dataset.dataset[i]["question"])
+                favored_solutions.append(dataset.dataset[i]["answer"])
+                infavored_solutions.append(dataset.dataset[i]["answer"])
+                wrong_solutions.append(WRONG_SOLUTIONS_PLACEHOLDER)
+                gaps.append(0)
             continue 
         
         # measure the utiliy of each completion according to their rationale
@@ -345,7 +354,6 @@ def generate_synthetic_data(
     dataset = datasets.Dataset.from_dict(
         {
             "question": questions,
-            "question_idx": questions_idx, #QUESTION IDX in the sorted dataset!
             "favored_solutions": favored_solutions,
             "infavored_solutions": infavored_solutions,
             "wrong_solutions": wrong_solutions,
@@ -393,6 +401,11 @@ if __name__ == "__main__":
         include_text:bool = False
         """Wehther the equations parsed from the generated completions 
         should include the text
+        """
+
+        use_org_data:bool = False
+        """Whether to use the original data for instances that failed
+        to generate any successful completions
         """
 
     args = tyro.cli(SyntheticDataConfig)
@@ -465,6 +478,7 @@ if __name__ == "__main__":
         model = model,
         beta_1=args.beta_1,
         include_text=args.include_text,
+        use_org_data=args.use_org_data,
         **generation_config,
     )
     
