@@ -1,11 +1,14 @@
 # Rejection Sampling Fine-Tuning on GSM-8K
 In this document, I provide a high-level summary of this project.
 Please refers to Take_Home_Test.ipynb for detials about Hyperparameters, Training Logs, Evaluation Results, etc.
-On top of what we asked for, I have put in some additioanl considersation, which I provide a high level overview in this document. Please then head to Take_Home_Test.ipynb for  more details, where I provide a walk through on the assignment
+On top of what we asked for, I have put in some additioanl considersation, which I provide a high level overview in this document. Please then head to Take_Home_Test.ipynb for  more details, where I provide a walk through on the assignment.
+At the end, I also acknowlegde many rooms of improvements based on the approach that I've taken. (i.e. better utility measure
+of sampled data, using orginal dataset for rejected samples etc...
+)
 
 To start with, let's have a look at the
 ## Results on our take-home assignment:
-Through rejection sampling on only 10% of the GSM-8K dataset, I've improved the model performance by 2 ~ 3.5% on Maj@1.
+Through rejection sampling on only less then 10% of the GSM-8K dataset, I've improved the model performance by 2 ~ 3.5% on Maj@1.
 The baseline Maj@1 is measured by using Phi-3.5-mini-insturct, resulting in 82.5% Maj@1 using temp=0.2 sampling at inference. 
 My best model, fine-tuned using QLora (4-bit quntization with 16 rank), achieves 86% Maj@1, using the same inference set up.
 
