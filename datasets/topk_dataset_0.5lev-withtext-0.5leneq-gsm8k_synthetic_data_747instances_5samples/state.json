@@ -1,0 +1,19 @@
+{
+  "_data_files": [
+    {
+      "filename": "data-00000-of-00001.arrow"
+    }
+  ],
+  "_fingerprint": "607e51f90dfba508",
+  "_format_columns": [
+    "input_ids",
+    "attention_mask",
+    "question_input_ids",
+    "question_attention_mask",
+    "labels"
+  ],
+  "_format_kwargs": {},
+  "_format_type": "torch",
+  "_output_all_columns": true,
+  "_split": "train"
+}
