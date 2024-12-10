@@ -272,7 +272,7 @@ class GSM8KDataset(Dataset):
             padded_seq_ids = seq_ids
         out["input_ids"] = padded_seq_ids
 
-        # left pad the attention_mask for the entire sequence manually
+        # right pad the attention_mask for the entire sequence manually
         # cat[ pad span(0) | seq_ids(1) ]
         attention_mask = self._right_pad_tensor(
             torch.ones(seq_ids.shape[0]), 
