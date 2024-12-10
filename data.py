@@ -184,12 +184,21 @@ class GSM8KDataset(Dataset):
             tensor
         ])
     
+    def _right_pad_tensor(self, tensor: torch.Tensor, padding_length: int, pad_value: int) -> torch.Tensor:
+        """Left-pad a tensor with a specified value."""
+        if padding_length == 0:
+            return tensor
+        return torch.cat([
+            tensor,
+            torch.full((padding_length,), pad_value, dtype=tensor.dtype),
+        ])
+    
     def _create_labels_tensor(self, padding_length: int, question_length: int, answer_ids: torch.Tensor) -> torch.Tensor:
         """Creates labels tensor with proper padding and masking."""
         return torch.cat([
-            torch.full((padding_length,), -100),
             torch.full((question_length,), -100),
-            answer_ids
+            answer_ids,
+            torch.full((padding_length,), -100),
         ])
     
     def _preprocess(self, instance: Dict[str, str|torch.Tensor]):
@@ -249,8 +258,8 @@ class GSM8KDataset(Dataset):
         # left pad the input_ids for the entire sequence manually
         sequence_padding_length = self.max_length - seq_ids.shape[0]
         if sequence_padding_length > 0:
-            # left padding with pad_token_id
-            padded_seq_ids = padded_seq_ids = self._left_pad_tensor(
+            # right padding with self.tokenizer.pad_token_id
+            padded_seq_ids = self._right_pad_tensor(
                 seq_ids,
                 sequence_padding_length,
                 self.tokenizer.pad_token_id,
@@ -265,7 +274,7 @@ class GSM8KDataset(Dataset):
 
         # left pad the attention_mask for the entire sequence manually
         # cat[ pad span(0) | seq_ids(1) ]
-        attention_mask = self._left_pad_tensor(
+        attention_mask = self._right_pad_tensor(
             torch.ones(seq_ids.shape[0]), 
             sequence_padding_length, 
             0,
@@ -275,10 +284,10 @@ class GSM8KDataset(Dataset):
         # left pad the labels for fine-tuning only on completions 
         # cat[ pad span(-100) | quesiton_input_ids(-100) |  answer_input_ids(-100) ]
         labels = self._create_labels_tensor(
-                sequence_padding_length,
-                question_encodings["input_ids"].shape[1],
-                answer_encodings["input_ids"].squeeze(0)
-            )
+            sequence_padding_length,
+            question_encodings["input_ids"].shape[1],
+            answer_encodings["input_ids"].squeeze(0)
+        )
         out["labels"] = labels
         
         return out
