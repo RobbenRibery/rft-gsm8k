@@ -196,9 +196,9 @@ class GSM8KDataset(Dataset):
     def _create_labels_tensor(self, padding_length: int, question_length: int, answer_ids: torch.Tensor) -> torch.Tensor:
         """Creates labels tensor with proper padding and masking."""
         return torch.cat([
+            torch.full((padding_length,), -100),
             torch.full((question_length,), -100),
             answer_ids,
-            torch.full((padding_length,), -100),
         ])
     
     def _preprocess(self, instance: Dict[str, str|torch.Tensor]):
@@ -259,7 +259,7 @@ class GSM8KDataset(Dataset):
         sequence_padding_length = self.max_length - seq_ids.shape[0]
         if sequence_padding_length > 0:
             # right padding with self.tokenizer.pad_token_id
-            padded_seq_ids = self._right_pad_tensor(
+            padded_seq_ids = self._left_pad_tensor(
                 seq_ids,
                 sequence_padding_length,
                 self.tokenizer.pad_token_id,
@@ -274,7 +274,7 @@ class GSM8KDataset(Dataset):
 
         # right pad the attention_mask for the entire sequence manually
         # cat[ pad span(0) | seq_ids(1) ]
-        attention_mask = self._right_pad_tensor(
+        attention_mask = self._left_pad_tensor(
             torch.ones(seq_ids.shape[0]), 
             sequence_padding_length, 
             0,

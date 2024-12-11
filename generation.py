@@ -469,6 +469,7 @@ if __name__ == "__main__":
         model = torch.compile(model)
 
     # generate the dataset
+    tokenizer.padding_side = "left"
     dataset = generate_synthetic_data(
         tokenizer, 
         TopKTrainData,
