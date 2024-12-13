@@ -38,7 +38,7 @@ os.environ["TOKENIZERS_PARALLELISM"] = "true"
 @dataclass
 class TrainingConfig:
 
-    learning_rate: float = 1e-03
+    learning_rate: float = 1e-04
     """Learning rate during training"""
 
     batch_size:int = 32
@@ -249,9 +249,18 @@ if __name__ == "__main__":
 
 
     # --------------- Load Tokenizer ---------------
-    tokenizer:PreTrainedTokenizer = AutoTokenizer.from_pretrained(args.model_name)
-    tokenizer.pad_token = tokenizer.eos_token
-    
+    tokenizer:PreTrainedTokenizer = AutoTokenizer.from_pretrained(
+        args.model_name,
+        trust_remote_code=True, 
+        add_eos_token=True, 
+        use_fast=True
+    )
+    if args.train:
+        tokenizer.pad_token = tokenizer.unk_token
+        tokenizer.pad_token_id = tokenizer.convert_tokens_to_ids(tokenizer.pad_token)
+        tokenizer.padding_side = 'left'
+    if args.evaluate:
+        tokenizer.padding_side = 'left'
 
     # --------------- Prepare Trainset ---------------
     train_dataset = datasets.load_dataset('gsm8k', 'main')['train']

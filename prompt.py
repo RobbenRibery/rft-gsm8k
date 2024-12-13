@@ -54,8 +54,8 @@ class EvalTemplate(EvalTemplateExp):
 Think step by step to solve the following question:
 NOTE:
 1. Reason deductively.
-1. Write all equations in a single line wihtout breaks in the middle.
-2. Submit final answer using PURE DIGITS, in the last starting with "####".
+2. Write all equations in a single line wihtout breaks in the middle.
+3. Submit final answer using PURE DIGITS, in the last starting with "####".
     i.e. "#### 10" if the final answer is $10
 
 ```question
