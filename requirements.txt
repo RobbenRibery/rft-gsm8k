@@ -3,8 +3,8 @@ numpy
 datasets
 wandb
 ipywidgets
-flash_attn
 torch
+flash-attn
 accelerate
 transformers
 bitsandbytes
@@ -14,3 +14,5 @@ isort
 black
 deepspeed
 seaborn 
+peft
+trl 

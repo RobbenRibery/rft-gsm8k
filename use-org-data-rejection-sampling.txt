@@ -1,0 +1,146 @@
+Maximum question num_tokens: 359
+Maximum answer num_tokens: 477
+Maximum sequence num_tokens: 836
+Maximum new tokens in generation: 527
+Setup Completed dataset:
+Dataset({
+    features: ['question', 'answer', 'num_hops', 'answer_str_digit', 'formatted_question', 'formatted_answer', 'question_length', 'answer_length', 'question_input_ids', 'question_attention_mask', 'input_ids', 'attention_mask', 'labels'],
+    num_rows: 747
+})
+Selected 747 instances for rejection sampling
+Each instance will generate 5 completions
+Saved generations/corrected-pred-parser-0.5lev-0.5leneq-useorgdata-gsm8k_synthetic_data_747instances_5samples_sequences.pickle
+No correct completions for istance 11
+Replace with original data for instance 11 @ hops: 9
+No correct completions for istance 15
+Replace with original data for instance 15 @ hops: 8
+No correct completions for istance 20
+Replace with original data for instance 20 @ hops: 8
+No correct completions for istance 26
+Replace with original data for instance 26 @ hops: 8
+No correct completions for istance 37
+Replace with original data for instance 37 @ hops: 8
+No correct completions for istance 47
+Replace with original data for instance 47 @ hops: 8
+No correct completions for istance 49
+Replace with original data for instance 49 @ hops: 8
+No correct completions for istance 63
+Replace with original data for instance 63 @ hops: 8
+No correct completions for istance 65
+Replace with original data for instance 65 @ hops: 8
+No correct completions for istance 74
+Replace with original data for instance 74 @ hops: 8
+No correct completions for istance 78
+Replace with original data for instance 78 @ hops: 8
+No correct completions for istance 79
+Replace with original data for instance 79 @ hops: 8
+No correct completions for istance 85
+Replace with original data for instance 85 @ hops: 8
+No correct completions for istance 86
+Replace with original data for instance 86 @ hops: 8
+No correct completions for istance 91
+Replace with original data for instance 91 @ hops: 8
+No correct completions for istance 98
+Replace with original data for instance 98 @ hops: 8
+No correct completions for istance 105
+Replace with original data for instance 105 @ hops: 7
+No correct completions for istance 107
+Replace with original data for instance 107 @ hops: 7
+No correct completions for istance 123
+Replace with original data for instance 123 @ hops: 7
+No correct completions for istance 129
+Replace with original data for instance 129 @ hops: 7
+No correct completions for istance 136
+Replace with original data for instance 136 @ hops: 7
+No correct completions for istance 163
+Replace with original data for instance 163 @ hops: 7
+No correct completions for istance 166
+Replace with original data for instance 166 @ hops: 7
+No correct completions for istance 170
+Replace with original data for instance 170 @ hops: 7
+No correct completions for istance 197
+Replace with original data for instance 197 @ hops: 7
+No correct completions for istance 200
+Replace with original data for instance 200 @ hops: 7
+No correct completions for istance 209
+Replace with original data for instance 209 @ hops: 7
+No correct completions for istance 227
+Replace with original data for instance 227 @ hops: 7
+No correct completions for istance 231
+Replace with original data for instance 231 @ hops: 7
+No correct completions for istance 241
+Replace with original data for instance 241 @ hops: 7
+No correct completions for istance 255
+Replace with original data for instance 255 @ hops: 7
+No correct completions for istance 272
+Replace with original data for instance 272 @ hops: 7
+No correct completions for istance 277
+Replace with original data for instance 277 @ hops: 7
+No correct completions for istance 306
+Replace with original data for instance 306 @ hops: 7
+No correct completions for istance 331
+Replace with original data for instance 331 @ hops: 6
+No correct completions for istance 341
+Replace with original data for instance 341 @ hops: 6
+No correct completions for istance 345
+Replace with original data for instance 345 @ hops: 6
+No correct completions for istance 360
+Replace with original data for instance 360 @ hops: 6
+No correct completions for istance 385
+Replace with original data for instance 385 @ hops: 6
+No correct completions for istance 395
+Replace with original data for instance 395 @ hops: 6
+No correct completions for istance 432
+Replace with original data for instance 432 @ hops: 6
+No correct completions for istance 435
+Replace with original data for instance 435 @ hops: 6
+No correct completions for istance 450
+Replace with original data for instance 450 @ hops: 6
+No correct completions for istance 460
+Replace with original data for instance 460 @ hops: 6
+No correct completions for istance 488
+Replace with original data for instance 488 @ hops: 6
+No correct completions for istance 499
+Replace with original data for instance 499 @ hops: 6
+No correct completions for istance 526
+Replace with original data for instance 526 @ hops: 6
+No correct completions for istance 550
+Replace with original data for instance 550 @ hops: 6
+No correct completions for istance 553
+Replace with original data for instance 553 @ hops: 6
+No correct completions for istance 557
+Replace with original data for instance 557 @ hops: 6
+No correct completions for istance 560
+Replace with original data for instance 560 @ hops: 6
+No correct completions for istance 563
+Replace with original data for instance 563 @ hops: 6
+No correct completions for istance 578
+Replace with original data for instance 578 @ hops: 6
+No correct completions for istance 580
+Replace with original data for instance 580 @ hops: 6
+No correct completions for istance 582
+Replace with original data for instance 582 @ hops: 6
+No correct completions for istance 590
+Replace with original data for instance 590 @ hops: 6
+No correct completions for istance 603
+Replace with original data for instance 603 @ hops: 6
+No correct completions for istance 607
+Replace with original data for instance 607 @ hops: 6
+No correct completions for istance 630
+Replace with original data for instance 630 @ hops: 6
+No correct completions for istance 634
+Replace with original data for instance 634 @ hops: 6
+No correct completions for istance 651
+Replace with original data for instance 651 @ hops: 6
+No correct completions for istance 688
+Replace with original data for instance 688 @ hops: 6
+No correct completions for istance 716
+Replace with original data for instance 716 @ hops: 6
+No correct completions for istance 735
+Replace with original data for instance 735 @ hops: 6
+No correct completions for istance 737
+Replace with original data for instance 737 @ hops: 6
+No correct completions for istance 744
+Replace with original data for instance 744 @ hops: 6
+Mean Optimality Gap: 3.4574401423832875
+Total Number of Accepted Completions: 747
