@@ -87,33 +87,37 @@ That said, the regex provided is not perfect. For example is in capaable of hand
 ### Cli Usage
 #### generation.py 
 ```bash 
-⚡ dev ~/rft-gsm8k python generation.py --help
+⚡ main ~/rft-gsm8k python generation.py --help
 usage: generation.py [-h] [OPTIONS]
 
-╭─ options ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
-│ -h, --help              show this help message and exit                                                                                                          │
-│ --temperature FLOAT     LLM Sampling Temperature (default: 0.7)                                                                                                  │
-│ --num-return-sequences INT                                                                                                                                       │
-│                         Number of samples to return for each instance (default: 5)                                                                               │
-│ --inference-batch-size INT                                                                                                                                       │
-│                         The batch size to use for inference (default: 2)                                                                                         │
-│ --reject-sampling-percentage FLOAT                                                                                                                               │
-│                         Percentage of the top-tile instances (sorted in terms of hope length)                                                                    │
-│                         to participate in rejection sampling (default: 0.1)                                                                                      │
-│ --run-name STR          The name of the run, which will be the name of the dataset saved (default: '')                                                           │
-│ --generation-path STR   Path of the .pickle file storing the                                                                                                     │
-│                         pre-loaded generatoins of the model (default: datasets/corrected-pred-parser-0.5lev-0.5leneq-gsm8k_synthetic_data_747instances_5samples) │
-│ --beta-1 FLOAT          Scoring weight on the Levenshtein distance of equations                                                                                  │
-│                         The complementary term (1-beta_1) is the weight on the length of the equations (default: 0.5)                                            │
-│ --include-text, --no-include-text                                                                                                                                │
-│                         Wehther the equations parsed from the generated completions                                                                              │
-│                         should include the text (default: False)                                                                                                 │
-╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭─ options ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ -h, --help              show this help message and exit                                                                                                    │
+│ --temperature FLOAT     LLM Sampling Temperature (default: 0.7)                                                                                            │
+│ --num-return-sequences INT                                                                                                                                 │
+│                         Number of samples to return for each instance (default: 5)                                                                         │
+│ --inference-batch-size INT                                                                                                                                 │
+│                         The batch size to use for inference (default: 2)                                                                                   │
+│ --reject-sampling-percentage FLOAT                                                                                                                         │
+│                         Percentage of the top-tile instances (sorted in terms of hope length)                                                              │
+│                         to participate in rejection sampling (default: 0.1)                                                                                │
+│ --run-name STR          The name of the run, which will be the name of the dataset saved (default: '')                                                     │
+│ --generation-path STR   Path of the .pickle file storing the                                                                                               │
+│                         pre-loaded generatoins of the model (default:                                                                                      │
+│                         datasets/corrected-pred-parser-0.5lev-0.5leneq-gsm8k_synthetic_data_747instances_5samples)                                         │
+│ --beta-1 FLOAT          Scoring weight on the Levenshtein distance of equations                                                                            │
+│                         The complementary term (1-beta_1) is the weight on the length of the equations (default: 0.5)                                      │
+│ --include-text, --no-include-text                                                                                                                          │
+│                         Wehther the equations parsed from the generated completions                                                                        │
+│                         should include the text (default: False)                                                                                           │
+│ --use-org-data, --no-use-org-data                                                                                                                          │
+│                         Whether to use the original data for instances that failed                                                                         │
+│                         to generate any successful completions (default: False)                                                                            │
+╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 ```
 
 #### lora.py 
-```
-⚡ dev ~/rft-gsm8k python lora.py --help
+```bash
+⚡ main ~/rft-gsm8k python lora.py --help
 usage: lora.py [-h] [OPTIONS]
 
 ╭─ options ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
