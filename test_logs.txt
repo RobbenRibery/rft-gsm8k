@@ -1,0 +1,72 @@
+[2024-12-14 13:03:39,809] [INFO] [real_accelerator.py:219:get_accelerator] Setting ds_accelerator to cuda (auto detect)
+Maximum question num_tokens: 359
+Maximum answer num_tokens: 365
+Maximum sequence num_tokens: 724
+Maximum new tokens in generation: 415
+Setup Completed dataset:
+Dataset({
+    features: ['question', 'answer', 'answer_str_digit', 'formatted_question', 'formatted_answer', 'question_length', 'answer_length', 'question_input_ids', 'question_attention_mask', 'input_ids', 'attention_mask', 'labels'],
+    num_rows: 7473
+})
+Train size: 7473
+Maximum question num_tokens: 266
+Maximum answer num_tokens: 225
+Maximum sequence num_tokens: 491
+Maximum new tokens in generation: 275
+Setup Completed dataset:
+Dataset({
+    features: ['question', 'answer', 'answer_str_digit', 'formatted_question', 'formatted_answer', 'question_length', 'answer_length', 'question_input_ids', 'question_attention_mask', 'input_ids', 'attention_mask', 'labels'],
+    num_rows: 131
+})
+Val size: 131
+Maximum question num_tokens: 310
+Maximum answer num_tokens: 311
+Maximum sequence num_tokens: 621
+Maximum new tokens in generation: 361
+Setup Completed dataset:
+Dataset({
+    features: ['question', 'answer', 'answer_str_digit', 'formatted_question', 'formatted_answer', 'question_length', 'answer_length', 'question_input_ids', 'question_attention_mask', 'input_ids', 'attention_mask', 'labels'],
+    num_rows: 1188
+})
+Test size: 1188
+#### Start evaluating models/[beta1(0.5)-equation-without-text]-[attn-ffn]-[16r-12alpha]-[lr1e-03-gradacum1]-[componly]-[rftdataonly]-qlora_rft_747instances/checkpoint-22 ####
+Moving avg: Batch 0 maj@1 -> 0.84375
+Moving avg: Batch 1 maj@1 -> 0.875
+Moving avg: Batch 2 maj@1 -> 0.8541666666666666
+Moving avg: Batch 3 maj@1 -> 0.8828125
+Moving avg: Batch 4 maj@1 -> 0.88125
+Moving avg: Batch 5 maj@1 -> 0.8697916666666666
+Moving avg: Batch 6 maj@1 -> 0.8705357142857143
+Moving avg: Batch 7 maj@1 -> 0.875
+Moving avg: Batch 8 maj@1 -> 0.8680555555555556
+Moving avg: Batch 9 maj@1 -> 0.85625
+Moving avg: Batch 10 maj@1 -> 0.8607954545454546
+Moving avg: Batch 11 maj@1 -> 0.8645833333333334
+Moving avg: Batch 12 maj@1 -> 0.8509615384615384
+Moving avg: Batch 13 maj@1 -> 0.8549107142857143
+Moving avg: Batch 14 maj@1 -> 0.8520833333333333
+Moving avg: Batch 15 maj@1 -> 0.85546875
+Moving avg: Batch 16 maj@1 -> 0.8566176470588235
+Moving avg: Batch 17 maj@1 -> 0.8576388888888888
+Moving avg: Batch 18 maj@1 -> 0.8618421052631579
+Moving avg: Batch 19 maj@1 -> 0.8578125
+Moving avg: Batch 20 maj@1 -> 0.8556547619047619
+Moving avg: Batch 21 maj@1 -> 0.8565340909090909
+Moving avg: Batch 22 maj@1 -> 0.8546195652173914
+Moving avg: Batch 23 maj@1 -> 0.8528645833333334
+Moving avg: Batch 24 maj@1 -> 0.85125
+Moving avg: Batch 25 maj@1 -> 0.8533653846153846
+Moving avg: Batch 26 maj@1 -> 0.8553240740740741
+Moving avg: Batch 27 maj@1 -> 0.8549107142857143
+Moving avg: Batch 28 maj@1 -> 0.853448275862069
+Moving avg: Batch 29 maj@1 -> 0.8552083333333333
+Moving avg: Batch 30 maj@1 -> 0.8548387096774194
+Moving avg: Batch 31 maj@1 -> 0.85546875
+Moving avg: Batch 32 maj@1 -> 0.8570075757575758
+Moving avg: Batch 33 maj@1 -> 0.8575367647058824
+Moving avg: Batch 34 maj@1 -> 0.8580357142857142
+Moving avg: Batch 35 maj@1 -> 0.8585069444444444
+Moving avg: Batch 36 maj@1 -> 0.8597972972972973
+Moving avg: Batch 37 maj@1 -> 0.8602693602693603
+Maj@1: 0.8602693602693603
+#### Results saved to results/models-[beta1(0.5)-equation-without-text]-[attn-ffn]-[16r-12alpha]-[lr1e-03-gradacum1]-[componly]-[rftdataonly]-qlora_rft_747instances-checkpoint-22_reproduce.csv

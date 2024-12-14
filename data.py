@@ -184,15 +184,6 @@ class GSM8KDataset(Dataset):
             tensor
         ])
     
-    def _right_pad_tensor(self, tensor: torch.Tensor, padding_length: int, pad_value: int) -> torch.Tensor:
-        """Left-pad a tensor with a specified value."""
-        if padding_length == 0:
-            return tensor
-        return torch.cat([
-            tensor,
-            torch.full((padding_length,), pad_value, dtype=tensor.dtype),
-        ])
-    
     def _create_labels_tensor(self, padding_length: int, question_length: int, answer_ids: torch.Tensor) -> torch.Tensor:
         """Creates labels tensor with proper padding and masking."""
         return torch.cat([
@@ -258,7 +249,7 @@ class GSM8KDataset(Dataset):
         # left pad the input_ids for the entire sequence manually
         sequence_padding_length = self.max_length - seq_ids.shape[0]
         if sequence_padding_length > 0:
-            # right padding with self.tokenizer.pad_token_id
+            # left padding with pad_token_id
             padded_seq_ids = self._left_pad_tensor(
                 seq_ids,
                 sequence_padding_length,
