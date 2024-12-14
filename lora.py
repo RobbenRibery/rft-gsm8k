@@ -456,7 +456,7 @@ if __name__ == "__main__":
             maj_1s.extend(
                 [1 if pred == label else 0 for pred, label in zip(preds, labels)]
             )
-            print(f"Batch {i} maj@1 -> {sum(maj_1s)/len(maj_1s)}")
+            print(f"Moving avg: Batch {i} maj@1 -> {sum(maj_1s)/len(maj_1s)}")
             sampled_completions.extend(outstrings)
             ground_truth_completions.extend(batch["answer"])
             questions.extend(batch["question"])

@@ -250,7 +250,7 @@ class GSM8KDataset(Dataset):
         sequence_padding_length = self.max_length - seq_ids.shape[0]
         if sequence_padding_length > 0:
             # left padding with pad_token_id
-            padded_seq_ids = padded_seq_ids = self._left_pad_tensor(
+            padded_seq_ids = self._left_pad_tensor(
                 seq_ids,
                 sequence_padding_length,
                 self.tokenizer.pad_token_id,
