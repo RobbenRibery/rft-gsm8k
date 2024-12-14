@@ -1,4 +1,4 @@
-[2024-12-14 13:03:39,809] [INFO] [real_accelerator.py:219:get_accelerator] Setting ds_accelerator to cuda (auto detect)
+[2024-12-14 13:28:05,293] [INFO] [real_accelerator.py:219:get_accelerator] Setting ds_accelerator to cuda (auto detect)
 Maximum question num_tokens: 359
 Maximum answer num_tokens: 365
 Maximum sequence num_tokens: 724
